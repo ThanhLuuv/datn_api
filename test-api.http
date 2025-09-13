@@ -1,0 +1,77 @@
+### Test Public Endpoint (không cần authentication)
+GET https://localhost:7138/api/test/public
+Content-Type: application/json
+
+###
+
+### Đăng ký tài khoản CUSTOMER
+POST https://localhost:7138/api/auth/register
+Content-Type: application/json
+
+{
+    "email": "customer@example.com",
+    "password": "123456",
+    "confirmPassword": "123456",
+    "roleId": 1
+}
+
+###
+
+### Đăng ký tài khoản ADMIN
+POST https://localhost:7138/api/auth/register
+Content-Type: application/json
+
+{
+    "email": "admin@example.com",
+    "password": "123456",
+    "confirmPassword": "123456",
+    "roleId": 3
+}
+
+###
+
+### Đăng nhập với tài khoản CUSTOMER
+POST https://localhost:7138/api/auth/login
+Content-Type: application/json
+
+{
+    "email": "customer@example.com",
+    "password": "123456"
+}
+
+###
+
+### Đăng nhập với tài khoản ADMIN
+POST https://localhost:7138/api/auth/login
+Content-Type: application/json
+
+{
+    "email": "admin@example.com",
+    "password": "123456"
+}
+
+###
+
+### Test Protected Endpoint (cần authentication)
+### Thay YOUR_JWT_TOKEN bằng token nhận được từ login
+GET https://localhost:7138/api/test/protected
+Content-Type: application/json
+Authorization: Bearer YOUR_JWT_TOKEN
+
+###
+
+### Test Admin Only Endpoint
+### Chỉ ADMIN mới truy cập được
+GET https://localhost:7138/api/test/admin-only
+Content-Type: application/json
+Authorization: Bearer YOUR_ADMIN_JWT_TOKEN
+
+###
+
+### Test Staff Only Endpoint
+### EMPLOYEE và ADMIN có thể truy cập
+GET https://localhost:7138/api/test/staff-only
+Content-Type: application/json
+Authorization: Bearer YOUR_JWT_TOKEN
+
+###
