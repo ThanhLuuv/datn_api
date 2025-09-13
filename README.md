@@ -45,7 +45,7 @@ dotnet build
 dotnet run
 ```
 
-Ứng dụng sẽ chạy tại: https://localhost:7138
+Ứng dụng sẽ chạy tại: https://localhost:5256
 
 ## API Endpoints
 
