@@ -1,11 +1,29 @@
+### Health Check - Kiểm tra tình trạng ứng dụng
+GET http://localhost:5256/health
+Content-Type: application/json
+
+### Health Check - Chi tiết
+GET http://localhost:5256/api/health
+Content-Type: application/json
+
+### Health Check - Status nhanh
+GET http://localhost:5256/api/health/status
+Content-Type: application/json
+
+### Health Check - Thông tin ứng dụng
+GET http://localhost:5256/api/health/info
+Content-Type: application/json
+
+###
+
 ### Test Public Endpoint (không cần authentication)
-GET https://localhost:7138/api/test/public
+GET http://localhost:5256/api/test/public
 Content-Type: application/json
 
 ###
 
 ### Đăng ký tài khoản CUSTOMER
-POST https://localhost:7138/api/auth/register
+POST http://localhost:5256/api/auth/register
 Content-Type: application/json
 
 {
@@ -18,7 +36,7 @@ Content-Type: application/json
 ###
 
 ### Đăng ký tài khoản ADMIN
-POST https://localhost:7138/api/auth/register
+POST http://localhost:5256/api/auth/register
 Content-Type: application/json
 
 {
@@ -31,7 +49,7 @@ Content-Type: application/json
 ###
 
 ### Đăng nhập với tài khoản CUSTOMER
-POST https://localhost:7138/api/auth/login
+POST http://localhost:5256/api/auth/login
 Content-Type: application/json
 
 {
@@ -42,7 +60,7 @@ Content-Type: application/json
 ###
 
 ### Đăng nhập với tài khoản ADMIN
-POST https://localhost:7138/api/auth/login
+POST http://localhost:5256/api/auth/login
 Content-Type: application/json
 
 {
@@ -54,7 +72,7 @@ Content-Type: application/json
 
 ### Test Protected Endpoint (cần authentication)
 ### Thay YOUR_JWT_TOKEN bằng token nhận được từ login
-GET https://localhost:7138/api/test/protected
+GET http://localhost:5256/api/test/protected
 Content-Type: application/json
 Authorization: Bearer YOUR_JWT_TOKEN
 
@@ -62,7 +80,7 @@ Authorization: Bearer YOUR_JWT_TOKEN
 
 ### Test Admin Only Endpoint
 ### Chỉ ADMIN mới truy cập được
-GET https://localhost:7138/api/test/admin-only
+GET http://localhost:5256/api/test/admin-only
 Content-Type: application/json
 Authorization: Bearer YOUR_ADMIN_JWT_TOKEN
 
@@ -70,7 +88,7 @@ Authorization: Bearer YOUR_ADMIN_JWT_TOKEN
 
 ### Test Staff Only Endpoint
 ### EMPLOYEE và ADMIN có thể truy cập
-GET https://localhost:7138/api/test/staff-only
+GET http://localhost:5256/api/test/staff-only
 Content-Type: application/json
 Authorization: Bearer YOUR_JWT_TOKEN
 
