@@ -36,7 +36,7 @@ public class AuthService : IAuthService
             }
 
             // Check if role exists
-            var role = await _context.Roles.FindAsync(registerDto.RoleId);
+            var role = await _context.Roles.FindAsync((long)registerDto.RoleId);
             if (role == null)
             {
                 return new ApiResponse<AuthResponseDto>
@@ -78,7 +78,7 @@ public class AuthService : IAuthService
                 {
                     Token = token,
                     Email = account.Email,
-                    Role = account.Role.RoleName,
+                    Role = account.Role.Name,
                     Expires = DateTime.UtcNow.AddDays(expireDays)
                 }
             };
@@ -136,7 +136,7 @@ public class AuthService : IAuthService
                 {
                     Token = token,
                     Email = account.Email,
-                    Role = account.Role.RoleName,
+                    Role = account.Role.Name,
                     Expires = DateTime.UtcNow.AddDays(expireDays)
                 }
             };

@@ -3,15 +3,20 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace BookStore.Api.Models;
 
-[Table("role")]
-public class Role
+[Table("permission")]
+public class Permission
 {
     [Key]
-    [Column("role_id")]
-    public long RoleId { get; set; }
+    [Column("permission_id")]
+    public long PermissionId { get; set; }
 
     [Required]
     [MaxLength(100)]
+    [Column("code")]
+    public string Code { get; set; } = string.Empty;
+
+    [Required]
+    [MaxLength(150)]
     [Column("name")]
     public string Name { get; set; } = string.Empty;
 
@@ -20,6 +25,5 @@ public class Role
     public string? Description { get; set; }
 
     // Navigation properties
-    public virtual ICollection<Account> Accounts { get; set; } = new List<Account>();
     public virtual ICollection<RolePermission> RolePermissions { get; set; } = new List<RolePermission>();
 }

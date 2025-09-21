@@ -17,16 +17,16 @@ public class JwtService : IJwtService
 
     public string GenerateToken(Account account)
     {
-        return GenerateToken(account.Email, account.Role.RoleName);
+        return GenerateToken(account.Email, account.Role.Name, account.AccountId);
     }
 
-    public string GenerateToken(string email, string role)
+    public string GenerateToken(string email, string role, long accountId = 0)
     {
         var jwtSettings = _configuration.GetSection("Jwt");
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["Key"]!));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
-        var claims = new[]
+        var claims = new List<Claim>
         {
             new Claim(JwtRegisteredClaimNames.Sub, email),
             new Claim(JwtRegisteredClaimNames.Email, email),
@@ -34,6 +34,11 @@ public class JwtService : IJwtService
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
             new Claim(JwtRegisteredClaimNames.Iat, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), ClaimValueTypes.Integer64)
         };
+
+        if (accountId > 0)
+        {
+            claims.Add(new Claim(ClaimTypes.NameIdentifier, accountId.ToString()));
+        }
 
         var expireDays = int.Parse(jwtSettings["ExpireDays"]!);
         var token = new JwtSecurityToken(

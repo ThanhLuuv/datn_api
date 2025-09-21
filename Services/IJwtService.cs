@@ -5,5 +5,5 @@ namespace BookStore.Api.Services;
 public interface IJwtService
 {
     string GenerateToken(Account account);
-    string GenerateToken(string email, string role);
+    string GenerateToken(string email, string role, long accountId = 0);
 }

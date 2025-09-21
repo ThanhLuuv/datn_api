@@ -1,0 +1,75 @@
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace BookStore.Api.Models;
+
+[Table("order")]
+public class Order
+{
+    [Key]
+    [Column("order_id")]
+    public long OrderId { get; set; }
+
+    [Required]
+    [Column("customer_id")]
+    public long CustomerId { get; set; }
+
+    [Required]
+    [Column("placed_at")]
+    public DateTime PlacedAt { get; set; } = DateTime.UtcNow;
+
+    [Required]
+    [MaxLength(150)]
+    [Column("receiver_name")]
+    public string ReceiverName { get; set; } = string.Empty;
+
+    [Required]
+    [MaxLength(30)]
+    [Column("receiver_phone")]
+    public string ReceiverPhone { get; set; } = string.Empty;
+
+    [Required]
+    [MaxLength(300)]
+    [Column("shipping_address")]
+    public string ShippingAddress { get; set; } = string.Empty;
+
+    [Column("delivery_date", TypeName = "date")]
+    public DateTime? DeliveryDate { get; set; }
+
+    [Required]
+    [Column("status")]
+    public OrderStatus Status { get; set; } = OrderStatus.Pending;
+
+    [Column("approved_by")]
+    public long? ApprovedBy { get; set; }
+
+    [Column("delivered_by")]
+    public long? DeliveredBy { get; set; }
+
+    // Navigation properties
+    [ForeignKey("CustomerId")]
+    public virtual Customer Customer { get; set; } = null!;
+
+    [ForeignKey("ApprovedBy")]
+    public virtual Employee? ApprovedByEmployee { get; set; }
+
+    [ForeignKey("DeliveredBy")]
+    public virtual Employee? DeliveredByEmployee { get; set; }
+
+    public virtual ICollection<OrderLine> OrderLines { get; set; } = new List<OrderLine>();
+    public virtual ICollection<Invoice> Invoices { get; set; } = new List<Invoice>();
+
+    // Computed properties
+    [NotMapped]
+    public decimal TotalAmount => OrderLines?.Sum(line => line.Qty * line.UnitPrice) ?? 0;
+
+    [NotMapped]
+    public int TotalQuantity => OrderLines?.Sum(line => line.Qty) ?? 0;
+}
+
+public enum OrderStatus
+{
+    Pending,    // Chưa duyệt
+    Assigned,   // Phân công
+    Delivered   // Đã giao
+}

@@ -11,6 +11,38 @@ public class TestController : ControllerBase
     /// <summary>
     /// Endpoint công khai - không cần authentication
     /// </summary>
+    [HttpGet]
+    public IActionResult Get()
+    {
+        return Ok(new
+        {
+            message = "Đây là endpoint công khai, ai cũng có thể truy cập",
+            timestamp = DateTime.UtcNow
+        });
+    }
+
+    /// <summary>
+    /// Endpoint yêu cầu authentication
+    /// </summary>
+    [HttpPost]
+    [Authorize]
+    public IActionResult Post()
+    {
+        var userEmail = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("email")?.Value;
+        var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+
+        return Ok(new
+        {
+            message = "Bạn đã đăng nhập thành công!",
+            email = userEmail,
+            role = userRole,
+            timestamp = DateTime.UtcNow
+        });
+    }
+
+    /// <summary>
+    /// Endpoint công khai - không cần authentication
+    /// </summary>
     [HttpGet("public")]
     public IActionResult GetPublic()
     {
@@ -58,10 +90,48 @@ public class TestController : ControllerBase
     }
 
     /// <summary>
-    /// Endpoint dành cho EMPLOYEE và ADMIN
+    /// Endpoint dành cho nhân viên bán hàng và admin
+    /// </summary>
+    [HttpGet("sales-only")]
+    [Authorize(Roles = "SALES_EMPLOYEE,ADMIN")]
+    public IActionResult GetSalesOnly()
+    {
+        var userEmail = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("email")?.Value;
+        var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+
+        return Ok(new
+        {
+            message = "Endpoint dành cho nhân viên bán hàng và admin",
+            email = userEmail,
+            role = userRole,
+            timestamp = DateTime.UtcNow
+        });
+    }
+
+    /// <summary>
+    /// Endpoint dành cho nhân viên giao hàng và admin
+    /// </summary>
+    [HttpGet("delivery-only")]
+    [Authorize(Roles = "DELIVERY_EMPLOYEE,ADMIN")]
+    public IActionResult GetDeliveryOnly()
+    {
+        var userEmail = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("email")?.Value;
+        var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+
+        return Ok(new
+        {
+            message = "Endpoint dành cho nhân viên giao hàng và admin",
+            email = userEmail,
+            role = userRole,
+            timestamp = DateTime.UtcNow
+        });
+    }
+
+    /// <summary>
+    /// Endpoint dành cho tất cả nhân viên và admin
     /// </summary>
     [HttpGet("staff-only")]
-    [Authorize(Roles = "EMPLOYEE,ADMIN")]
+    [Authorize(Roles = "SALES_EMPLOYEE,DELIVERY_EMPLOYEE,ADMIN")]
     public IActionResult GetStaffOnly()
     {
         var userEmail = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("email")?.Value;
@@ -69,7 +139,7 @@ public class TestController : ControllerBase
 
         return Ok(new
         {
-            message = "Endpoint dành cho nhân viên và admin",
+            message = "Endpoint dành cho tất cả nhân viên và admin",
             email = userEmail,
             role = userRole,
             timestamp = DateTime.UtcNow
