@@ -2,6 +2,9 @@ using BookStore.Api.DTOs;
 using BookStore.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using Microsoft.EntityFrameworkCore;
+using BookStore.Api.Models;
 using System.Security.Claims;
 
 namespace BookStore.Api.Controllers;
@@ -12,10 +15,12 @@ namespace BookStore.Api.Controllers;
 public class PurchaseOrderController : ControllerBase
 {
     private readonly IPurchaseOrderService _purchaseOrderService;
+    private readonly ILogger<PurchaseOrderController> _logger;
 
-    public PurchaseOrderController(IPurchaseOrderService purchaseOrderService)
+    public PurchaseOrderController(IPurchaseOrderService purchaseOrderService, ILogger<PurchaseOrderController> logger)
     {
         _purchaseOrderService = purchaseOrderService;
+        _logger = logger;
     }
 
     /// <summary>
@@ -78,19 +83,44 @@ public class PurchaseOrderController : ControllerBase
             });
         }
 
-        // Get current user ID from JWT token
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier);
-        if (userIdClaim == null || !long.TryParse(userIdClaim.Value, out long userId))
+        // Debug: Log all claims
+        _logger.LogInformation("[CreatePO] User.Identity.IsAuthenticated: {Auth}", User.Identity?.IsAuthenticated);
+        _logger.LogInformation("[CreatePO] Claims count: {Count}", User.Claims.Count());
+        foreach (var claim in User.Claims)
         {
+            _logger.LogInformation("[CreatePO] Claim: {Type} = {Value}", claim.Type, claim.Value);
+        }
+
+        // Lấy accountId từ claims - tìm claim NameIdentifier có giá trị là số
+        var nameIdentifierClaims = User.Claims.Where(c => c.Type == ClaimTypes.NameIdentifier).ToList();
+        _logger.LogInformation("[CreatePO] Found {Count} NameIdentifier claims", nameIdentifierClaims.Count);
+        
+        string? accountIdClaim = null;
+        foreach (var claim in nameIdentifierClaims)
+        {
+            _logger.LogInformation("[CreatePO] NameIdentifier claim: {Value}", claim.Value);
+            if (long.TryParse(claim.Value, out _))
+            {
+                accountIdClaim = claim.Value;
+                break;
+            }
+        }
+        
+        if (string.IsNullOrEmpty(accountIdClaim) || !long.TryParse(accountIdClaim, out long accountId))
+        {
+            _logger.LogError("[CreatePO] Cannot get numeric accountId from token claims. Found claims: {Claims}", 
+                string.Join(", ", nameIdentifierClaims.Select(c => c.Value)));
             return Unauthorized(new ApiResponse<PurchaseOrderDto>
             {
                 Success = false,
-                Message = "Không thể xác định người dùng",
-                Errors = new List<string> { "Token không hợp lệ" }
+                Message = "Không thể xác định người dùng từ token",
+                Errors = new List<string> { "Token không hợp lệ hoặc thiếu thông tin accountId" }
             });
         }
 
-        var result = await _purchaseOrderService.CreatePurchaseOrderAsync(createPurchaseOrderDto, userId);
+        _logger.LogInformation("[CreatePO] Creating PO for accountId={AccountId}", accountId);
+
+        var result = await _purchaseOrderService.CreatePurchaseOrderAsync(createPurchaseOrderDto, accountId);
         
         if (result.Success)
         {
@@ -150,6 +180,31 @@ public class PurchaseOrderController : ControllerBase
     {
         var result = await _purchaseOrderService.DeletePurchaseOrderAsync(poId);
         
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+
+        if (result.Message.Contains("Không tìm thấy"))
+        {
+            return NotFound(result);
+        }
+
+        return BadRequest(result);
+    }
+
+    /// <summary>
+    /// Đổi trạng thái đơn đặt mua
+    /// </summary>
+    /// <param name="poId">ID đơn đặt mua</param>
+    /// <param name="request">Trạng thái mới</param>
+    /// <returns>Đơn đặt mua sau khi cập nhật</returns>
+    [HttpPost("{poId}/change-status")]
+    [Authorize(Roles = "SALES_EMPLOYEE,ADMIN")]
+    public async Task<ActionResult<ApiResponse<PurchaseOrderDto>>> ChangeStatus(long poId, [FromBody] ChangePurchaseOrderStatusDto request)
+    {
+        _logger.LogInformation("[ChangeStatus] poId={PoId}, newStatusId={Status}", poId, request.NewStatusId);
+        var result = await _purchaseOrderService.ChangeStatusAsync(poId, request);
         if (result.Success)
         {
             return Ok(result);

@@ -2,16 +2,24 @@ using BookStore.Api.Data;
 using BookStore.Api.DTOs;
 using BookStore.Api.Models;
 using Microsoft.EntityFrameworkCore;
+using ClosedXML.Excel;
+using MailKit.Net.Smtp;
+using MimeKit;
+using System.IO;
+using CloudinaryDotNet;
+using CloudinaryDotNet.Actions;
 
 namespace BookStore.Api.Services;
 
 public class PurchaseOrderService : IPurchaseOrderService
 {
     private readonly BookStoreDbContext _context;
+    private readonly IConfiguration _configuration;
 
-    public PurchaseOrderService(BookStoreDbContext context)
+    public PurchaseOrderService(BookStoreDbContext context, IConfiguration configuration)
     {
         _context = context;
+        _configuration = configuration;
     }
 
     public async Task<ApiResponse<PurchaseOrderListResponse>> GetPurchaseOrdersAsync(PurchaseOrderSearchRequest searchRequest)
@@ -21,6 +29,7 @@ public class PurchaseOrderService : IPurchaseOrderService
             var query = _context.PurchaseOrders
                 .Include(po => po.Publisher)
                 .Include(po => po.CreatedByEmployee)
+                .Include(po => po.Status)
                 .Include(po => po.PurchaseOrderLines)
                     .ThenInclude(pol => pol.Book)
                 .AsQueryable();
@@ -44,6 +53,11 @@ public class PurchaseOrderService : IPurchaseOrderService
             if (searchRequest.ToDate.HasValue)
             {
                 query = query.Where(po => po.OrderedAt <= searchRequest.ToDate.Value);
+            }
+
+            if (searchRequest.StatusId.HasValue)
+            {
+                query = query.Where(po => po.StatusId == searchRequest.StatusId.Value);
             }
 
             // Apply sorting
@@ -76,6 +90,8 @@ public class PurchaseOrderService : IPurchaseOrderService
                     CreatedBy = po.CreatedBy,
                     CreatedByName = po.CreatedByEmployee.FirstName + " " + po.CreatedByEmployee.LastName,
                     Note = po.Note,
+                    StatusId = po.StatusId,
+                    StatusName = po.Status != null ? po.Status.StatusName : null,
                     TotalAmount = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered * pol.UnitPrice),
                     TotalQuantity = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered),
                     Lines = po.PurchaseOrderLines.Select(pol => new PurchaseOrderLineDto
@@ -124,6 +140,7 @@ public class PurchaseOrderService : IPurchaseOrderService
             var purchaseOrder = await _context.PurchaseOrders
                 .Include(po => po.Publisher)
                 .Include(po => po.CreatedByEmployee)
+                .Include(po => po.Status)
                 .Include(po => po.PurchaseOrderLines)
                     .ThenInclude(pol => pol.Book)
                 .Where(po => po.PoId == poId)
@@ -136,6 +153,8 @@ public class PurchaseOrderService : IPurchaseOrderService
                     CreatedBy = po.CreatedBy,
                     CreatedByName = po.CreatedByEmployee.FirstName + " " + po.CreatedByEmployee.LastName,
                     Note = po.Note,
+                    StatusId = po.StatusId,
+                    StatusName = po.Status != null ? po.Status.StatusName : null,
                     TotalAmount = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered * pol.UnitPrice),
                     TotalQuantity = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered),
                     Lines = po.PurchaseOrderLines.Select(pol => new PurchaseOrderLineDto
@@ -178,7 +197,7 @@ public class PurchaseOrderService : IPurchaseOrderService
         }
     }
 
-    public async Task<ApiResponse<PurchaseOrderDto>> CreatePurchaseOrderAsync(CreatePurchaseOrderDto createPurchaseOrderDto, long createdBy)
+    public async Task<ApiResponse<PurchaseOrderDto>> CreatePurchaseOrderAsync(CreatePurchaseOrderDto createPurchaseOrderDto, long createdByAccountId)
     {
         try
         {
@@ -195,15 +214,46 @@ public class PurchaseOrderService : IPurchaseOrderService
             }
 
             // Validate employee exists
-            var employee = await _context.Employees.FindAsync(createdBy);
+            var employee = await _context.Employees.FirstOrDefaultAsync(e => e.AccountId == createdByAccountId);
             if (employee == null)
             {
-                return new ApiResponse<PurchaseOrderDto>
+                // Auto-provision minimal employee for this account
+                var account = await _context.Accounts.FirstOrDefaultAsync(a => a.AccountId == createdByAccountId);
+                if (account == null)
                 {
-                    Success = false,
-                    Message = "Nhân viên không tồn tại",
-                    Errors = new List<string> { "Nhân viên không tồn tại" }
+                    return new ApiResponse<PurchaseOrderDto>
+                    {
+                        Success = false,
+                        Message = "Tài khoản không tồn tại",
+                        Errors = new List<string> { "Không tìm thấy tài khoản người dùng" }
+                    };
+                }
+
+                var firstDeptId = await _context.Departments.Select(d => d.DepartmentId).FirstOrDefaultAsync();
+                if (firstDeptId == 0)
+                {
+                    // create a default department if none exists
+                    var dept = new Department { Name = "Kinh doanh", Description = "Phòng kinh doanh" };
+                    _context.Departments.Add(dept);
+                    await _context.SaveChangesAsync();
+                    firstDeptId = dept.DepartmentId;
+                }
+
+                var nameParts = (account.Email ?? "user@local").Split('@')[0].Split('.', '-', '_');
+                var firstName = nameParts.Length > 0 ? nameParts[0] : "User";
+                var lastName = nameParts.Length > 1 ? nameParts[1] : "Admin";
+
+                employee = new Employee
+                {
+                    AccountId = account.AccountId,
+                    DepartmentId = firstDeptId,
+                    FirstName = firstName,
+                    LastName = lastName,
+                    Gender = Gender.Male,
+                    Email = account.Email
                 };
+                _context.Employees.Add(employee);
+                await _context.SaveChangesAsync();
             }
 
             // Validate books exist
@@ -224,12 +274,26 @@ public class PurchaseOrderService : IPurchaseOrderService
                 };
             }
 
+            long? statusId = createPurchaseOrderDto.StatusId;
+            if (!statusId.HasValue)
+            {
+                var pendingStatus = await _context.PurchaseOrderStatuses
+                    .Where(s => s.StatusName == "Pending")
+                    .Select(s => s.StatusId)
+                    .FirstOrDefaultAsync();
+                if (pendingStatus != 0)
+                {
+                    statusId = pendingStatus;
+                }
+            }
+
             var purchaseOrder = new PurchaseOrder
             {
                 PublisherId = createPurchaseOrderDto.PublisherId,
                 OrderedAt = DateTime.UtcNow,
-                CreatedBy = createdBy,
-                Note = createPurchaseOrderDto.Note
+                CreatedBy = employee.EmployeeId,
+                Note = createPurchaseOrderDto.Note,
+                StatusId = statusId
             };
 
             _context.PurchaseOrders.Add(purchaseOrder);
@@ -255,6 +319,7 @@ public class PurchaseOrderService : IPurchaseOrderService
             var createdPurchaseOrder = await _context.PurchaseOrders
                 .Include(po => po.Publisher)
                 .Include(po => po.CreatedByEmployee)
+                .Include(po => po.Status)
                 .Include(po => po.PurchaseOrderLines)
                     .ThenInclude(pol => pol.Book)
                 .Where(po => po.PoId == purchaseOrder.PoId)
@@ -267,6 +332,8 @@ public class PurchaseOrderService : IPurchaseOrderService
                     CreatedBy = po.CreatedBy,
                     CreatedByName = po.CreatedByEmployee.FirstName + " " + po.CreatedByEmployee.LastName,
                     Note = po.Note,
+                    StatusId = po.StatusId,
+                    StatusName = po.Status != null ? po.Status.StatusName : null,
                     TotalAmount = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered * pol.UnitPrice),
                     TotalQuantity = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered),
                     Lines = po.PurchaseOrderLines.Select(pol => new PurchaseOrderLineDto
@@ -297,6 +364,22 @@ public class PurchaseOrderService : IPurchaseOrderService
                 Errors = new List<string> { ex.Message }
             };
         }
+    }
+
+    public async Task<ApiResponse<PurchaseOrderDto>> CreatePurchaseOrderAsync(CreatePurchaseOrderDto createPurchaseOrderDto, string createdByEmail)
+    {
+        // Resolve account id by email then reuse existing method
+        var account = await _context.Accounts.FirstOrDefaultAsync(a => a.Email == createdByEmail);
+        if (account == null)
+        {
+            return new ApiResponse<PurchaseOrderDto>
+            {
+                Success = false,
+                Message = "Tài khoản không tồn tại",
+                Errors = new List<string> { "Không tìm thấy tài khoản người dùng" }
+            };
+        }
+        return await CreatePurchaseOrderAsync(createPurchaseOrderDto, account.AccountId);
     }
 
     public async Task<ApiResponse<PurchaseOrderDto>> UpdatePurchaseOrderAsync(long poId, UpdatePurchaseOrderDto updatePurchaseOrderDto)
@@ -351,6 +434,7 @@ public class PurchaseOrderService : IPurchaseOrderService
 
             // Update purchase order
             purchaseOrder.Note = updatePurchaseOrderDto.Note;
+            purchaseOrder.StatusId = updatePurchaseOrderDto.StatusId ?? purchaseOrder.StatusId;
 
             // Update purchase order lines
             var existingLineIds = purchaseOrder.PurchaseOrderLines
@@ -409,6 +493,7 @@ public class PurchaseOrderService : IPurchaseOrderService
             var updatedPurchaseOrder = await _context.PurchaseOrders
                 .Include(po => po.Publisher)
                 .Include(po => po.CreatedByEmployee)
+                .Include(po => po.Status)
                 .Include(po => po.PurchaseOrderLines)
                     .ThenInclude(pol => pol.Book)
                 .Where(po => po.PoId == poId)
@@ -421,6 +506,8 @@ public class PurchaseOrderService : IPurchaseOrderService
                     CreatedBy = po.CreatedBy,
                     CreatedByName = po.CreatedByEmployee.FirstName + " " + po.CreatedByEmployee.LastName,
                     Note = po.Note,
+                    StatusId = po.StatusId,
+                    StatusName = po.Status != null ? po.Status.StatusName : null,
                     TotalAmount = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered * pol.UnitPrice),
                     TotalQuantity = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered),
                     Lines = po.PurchaseOrderLines.Select(pol => new PurchaseOrderLineDto
@@ -504,5 +591,261 @@ public class PurchaseOrderService : IPurchaseOrderService
                 Errors = new List<string> { ex.Message }
             };
         }
+    }
+
+    public async Task<ApiResponse<PurchaseOrderDto>> ChangeStatusAsync(long poId, ChangePurchaseOrderStatusDto request)
+    {
+        try
+        {
+            var po = await _context.PurchaseOrders
+                .Include(p => p.Publisher)
+                .Include(p => p.CreatedByEmployee)
+                .Include(p => p.PurchaseOrderLines)
+                    .ThenInclude(l => l.Book)
+                .Include(p => p.Status)
+                .FirstOrDefaultAsync(p => p.PoId == poId);
+
+            if (po == null)
+            {
+                return new ApiResponse<PurchaseOrderDto>
+                {
+                    Success = false,
+                    Message = "Không tìm thấy đơn đặt mua",
+                    Errors = new List<string> { "Đơn đặt mua không tồn tại" }
+                };
+            }
+
+            var oldStatusId = po.StatusId;
+            po.StatusId = request.NewStatusId;
+            if (!string.IsNullOrWhiteSpace(request.Note))
+            {
+                po.Note = request.Note;
+            }
+
+            await _context.SaveChangesAsync();
+
+            // If transition 1 -> 2, generate Excel and email to publisher
+            if (oldStatusId == 1 && request.NewStatusId == 2)
+            {
+                var excelBytes = GeneratePurchaseOrderExcel(po);
+                var fileUrl = await UploadToCloudinaryAsync(excelBytes, $"PO_{po.PoId}.xlsx");
+                po.OrderFileUrl = fileUrl;
+                await _context.SaveChangesAsync();
+                await SendEmailToPublisherWithAttachmentAsync(po, excelBytes);
+            }
+
+            // Return updated dto
+            var dto = await _context.PurchaseOrders
+                .Include(x => x.Publisher)
+                .Include(x => x.CreatedByEmployee)
+                .Include(x => x.Status)
+                .Include(x => x.PurchaseOrderLines)
+                    .ThenInclude(pol => pol.Book)
+                .Where(x => x.PoId == poId)
+                .Select(x => new PurchaseOrderDto
+                {
+                    PoId = x.PoId,
+                    PublisherId = x.PublisherId,
+                    PublisherName = x.Publisher.Name,
+                    OrderedAt = x.OrderedAt,
+                    CreatedBy = x.CreatedBy,
+                    CreatedByName = x.CreatedByEmployee.FirstName + " " + x.CreatedByEmployee.LastName,
+                    Note = x.Note,
+                    StatusId = x.StatusId,
+                    StatusName = x.Status != null ? x.Status.StatusName : null,
+                    OrderFileUrl = x.OrderFileUrl,
+                    TotalAmount = x.PurchaseOrderLines.Sum(l => l.QtyOrdered * l.UnitPrice),
+                    TotalQuantity = x.PurchaseOrderLines.Sum(l => l.QtyOrdered),
+                    Lines = x.PurchaseOrderLines.Select(l => new PurchaseOrderLineDto
+                    {
+                        PoLineId = l.PoLineId,
+                        Isbn = l.Isbn,
+                        BookTitle = l.Book.Title,
+                        QtyOrdered = l.QtyOrdered,
+                        UnitPrice = l.UnitPrice,
+                        LineTotal = l.QtyOrdered * l.UnitPrice
+                    }).ToList()
+                })
+                .FirstAsync();
+
+            return new ApiResponse<PurchaseOrderDto>
+            {
+                Success = true,
+                Message = "Cập nhật trạng thái thành công",
+                Data = dto
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<PurchaseOrderDto>
+            {
+                Success = false,
+                Message = "Đã xảy ra lỗi khi cập nhật trạng thái",
+                Errors = new List<string> { ex.Message }
+            };
+        }
+    }
+
+    private byte[] GeneratePurchaseOrderExcel(PurchaseOrder po)
+    {
+        using var workbook = new XLWorkbook();
+        var ws = workbook.AddWorksheet("PO");
+
+        // Header
+        ws.Cell(1, 1).Value = "CÔNG TY TNHH NHÀ SÁCH TA";
+        ws.Range(1, 1, 1, 10).Merge().Style
+            .Font.SetBold().Font.SetFontSize(16)
+            .Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
+
+        ws.Cell(3, 1).Value = "PHIẾU ĐẶT HÀNG";
+        ws.Range(3, 1, 3, 10).Merge().Style
+            .Font.SetBold().Font.SetFontSize(14)
+            .Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
+
+        // Customer info (your store)
+        ws.Cell(5, 1).Value = "Thông tin khách hàng:";
+        ws.Cell(6, 1).Value = "Địa chỉ:";
+        ws.Cell(7, 1).Value = "Mã số thuế:";
+        ws.Cell(8, 1).Value = "Người lập đơn:";
+        ws.Cell(9, 1).Value = "Email:";
+
+        ws.Cell(6, 3).Value = "123 Đường Lê Lợi, Quận 1, TP.HCM";
+        ws.Cell(7, 3).Value = "0301234567";
+        ws.Cell(8, 3).Value = po.CreatedByEmployee.FirstName + " " + po.CreatedByEmployee.LastName;
+        ws.Cell(9, 3).Value = "";
+
+        // Publisher info
+        ws.Cell(5, 6).Value = "Thông tin nhà xuất bản:";
+        ws.Cell(6, 6).Value = "Tên NCC:";
+        ws.Cell(7, 6).Value = "Địa chỉ:";
+        ws.Cell(8, 6).Value = "Ngày lập đơn:";
+        ws.Cell(6, 7).Value = po.Publisher.Name;
+        ws.Cell(7, 7).Value = po.Publisher.Address ?? string.Empty;
+        ws.Cell(8, 7).Value = po.OrderedAt.ToString("d/M/yyyy");
+
+        // Table header
+        var startRow = 11;
+        ws.Cell(startRow, 1).Value = "STT";
+        ws.Cell(startRow, 2).Value = "Tên sản phẩm";
+        ws.Cell(startRow, 6).Value = "Đơn vị tính";
+        ws.Cell(startRow, 7).Value = "Số lượng";
+        ws.Cell(startRow, 8).Value = "Đơn giá (VND)";
+        ws.Cell(startRow, 9).Value = "Thành tiền (VND)";
+
+		// Style header similar to image (yellow background, bold, borders)
+		var headerRange = ws.Range(startRow, 1, startRow, 9);
+		headerRange.Style.Fill.SetBackgroundColor(XLColor.Yellow);
+		headerRange.Style.Font.SetBold();
+		headerRange.Style.Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
+		headerRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+		headerRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+
+        var row = startRow + 1;
+        int index = 1;
+        foreach (var l in po.PurchaseOrderLines)
+        {
+            ws.Cell(row, 1).Value = index++;
+            ws.Cell(row, 2).Value = l.Book.Title;
+            ws.Cell(row, 6).Value = "Cái";
+            ws.Cell(row, 7).Value = l.QtyOrdered;
+            ws.Cell(row, 8).Value = l.UnitPrice;
+            ws.Cell(row, 9).Value = l.QtyOrdered * l.UnitPrice;
+			ws.Range(row, 1, row, 9).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+			ws.Range(row, 1, row, 9).Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+            row++;
+        }
+
+        var total = po.PurchaseOrderLines.Sum(l => l.QtyOrdered * l.UnitPrice);
+		ws.Cell(row + 1, 8).Value = "Tổng tiền hàng:";
+		ws.Cell(row + 1, 8).Style.Font.SetBold();
+		ws.Cell(row + 1, 9).Value = total;
+		ws.Cell(row + 1, 9).Style.NumberFormat.Format = "#,##0";
+		ws.Cell(row + 1, 9).Style.Font.SetBold();
+
+		// Payment method and bank account section
+		var infoStart = row + 3;
+		ws.Cell(infoStart, 1).Value = "Phương thức thanh toán:";
+		ws.Cell(infoStart, 3).Value = "Chuyển khoản";
+		ws.Cell(infoStart + 1, 1).Value = "Tài khoản ngân hàng:";
+		ws.Cell(infoStart + 1, 3).Value = "123456789 - Ngân hàng ACB - CN TP.HCM";
+
+		// Signatures
+		var signStart = infoStart + 3;
+		ws.Cell(signStart, 1).Value = "Người lập đơn:";
+		ws.Cell(signStart, 7).Value = "Xác nhận của nhà xuất bản";
+		ws.Range(signStart + 1, 1, signStart + 3, 3).Style.Border.OutsideBorder = XLBorderStyleValues.Dashed;
+		ws.Range(signStart + 1, 7, signStart + 3, 9).Style.Border.OutsideBorder = XLBorderStyleValues.Dashed;
+
+        ws.Columns().AdjustToContents();
+
+        using var ms = new MemoryStream();
+        workbook.SaveAs(ms);
+        return ms.ToArray();
+    }
+
+    private async Task SendEmailToPublisherWithAttachmentAsync(PurchaseOrder po, byte[] attachmentBytes)
+    {
+        var emailTo = po.Publisher.Email;
+        if (string.IsNullOrWhiteSpace(emailTo))
+        {
+            return; // No email to send
+        }
+
+        var host = _configuration["Email:Smtp:Host"] ?? "smtp.gmail.com";
+        var port = int.TryParse(_configuration["Email:Smtp:Port"], out var p) ? p : 587;
+        var user = _configuration["Email:Credentials:User"];
+        var pass = (_configuration["Email:Credentials:Password"] ?? string.Empty).Replace(" ", string.Empty); // remove spaces
+
+        if (string.IsNullOrWhiteSpace(user) || string.IsNullOrWhiteSpace(pass))
+        {
+            return; // Missing configuration
+        }
+
+        var message = new MimeMessage();
+        message.From.Add(new MailboxAddress("BookStore", user));
+        message.To.Add(MailboxAddress.Parse(emailTo));
+        message.Subject = $"Phiếu đặt hàng PO#{po.PoId}";
+
+        var builder = new BodyBuilder
+        {
+            TextBody = "Kính gửi nhà xuất bản,\n\nĐính kèm phiếu đặt hàng.\n\nTrân trọng."
+        };
+        builder.Attachments.Add($"PO_{po.PoId}.xlsx", attachmentBytes, new ContentType("application", "vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+        message.Body = builder.ToMessageBody();
+
+        using var smtp = new SmtpClient();
+        await smtp.ConnectAsync(host, port, MailKit.Security.SecureSocketOptions.StartTls);
+        await smtp.AuthenticateAsync(user, pass);
+        await smtp.SendAsync(message);
+        await smtp.DisconnectAsync(true);
+    }
+
+    private async Task<string?> UploadToCloudinaryAsync(byte[] fileBytes, string fileName)
+    {
+        // Expect CLOUDINARY_URL in environment or appsettings
+        var cloudinaryUrl = Environment.GetEnvironmentVariable("CLOUDINARY_URL")
+            ?? _configuration["Cloudinary:Url"];
+        if (string.IsNullOrWhiteSpace(cloudinaryUrl))
+        {
+            return null;
+        }
+
+        var cloudinary = new Cloudinary(cloudinaryUrl);
+
+        using var ms = new MemoryStream(fileBytes);
+        var uploadParams = new RawUploadParams
+        {
+            File = new FileDescription(fileName, ms),
+            UseFilename = true,
+            UniqueFilename = true,
+            Overwrite = false,
+            Folder = "purchase_orders"
+        };
+        var result = await cloudinary.UploadAsync(uploadParams);
+        if (result.StatusCode == System.Net.HttpStatusCode.OK)
+        {
+            return result.SecureUrl?.ToString() ?? result.Url?.ToString();
+        }
+        return null;
     }
 }
