@@ -27,6 +27,7 @@ public class BookStoreDbContext : DbContext
     public DbSet<AuthorBook> AuthorBooks { get; set; }
     public DbSet<Publisher> Publishers { get; set; }
     public DbSet<PriceChange> PriceChanges { get; set; }
+    public DbSet<Rating> Ratings { get; set; }
 
     // Order management
     public DbSet<Order> Orders { get; set; }
@@ -249,6 +250,32 @@ public class BookStoreDbContext : DbContext
             entity.Property(pc => pc.NewPrice).HasColumnName("new_price").HasColumnType("decimal(12,2)");
             entity.Property(pc => pc.ChangedAt).HasColumnName("changed_at");
             entity.Property(pc => pc.EmployeeId).HasColumnName("employee_id");
+        });
+
+        // Rating mapping
+        modelBuilder.Entity<Rating>(entity =>
+        {
+            entity.ToTable("rating");
+            entity.HasKey(r => r.RatingId);
+            entity.Property(r => r.RatingId).HasColumnName("rating_id");
+            entity.Property(r => r.CustomerId).HasColumnName("customer_id");
+            entity.Property(r => r.Isbn).HasColumnName("isbn");
+            entity.Property(r => r.Stars).HasColumnName("stars");
+            entity.Property(r => r.Comment).HasColumnName("comment");
+            entity.Property(r => r.CreatedAt).HasColumnName("created_at");
+            entity.Property(r => r.UpdatedAt).HasColumnName("updated_at");
+
+            entity.HasOne(r => r.Book)
+                .WithMany(b => b.Ratings)
+                .HasForeignKey(r => r.Isbn)
+                .HasConstraintName("fk_rating_book");
+
+            entity.HasOne(r => r.Customer)
+                .WithMany(c => c.Ratings)
+                .HasForeignKey(r => r.CustomerId)
+                .HasConstraintName("fk_rating_customer");
+
+            entity.HasIndex(r => new { r.Isbn, r.CustomerId }).IsUnique();
         });
 
         // Configure enum conversions

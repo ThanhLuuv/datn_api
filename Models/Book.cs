@@ -55,5 +55,6 @@ public class Book
 
     public virtual ICollection<AuthorBook> AuthorBooks { get; set; } = new List<AuthorBook>();
     public virtual ICollection<OrderLine> OrderLines { get; set; } = new List<OrderLine>();
+    public virtual ICollection<Rating> Ratings { get; set; } = new List<Rating>();
     public virtual ICollection<PurchaseOrderLine> PurchaseOrderLines { get; set; } = new List<PurchaseOrderLine>();
 }
