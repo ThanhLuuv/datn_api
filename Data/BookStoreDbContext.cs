@@ -26,6 +26,7 @@ public class BookStoreDbContext : DbContext
     public DbSet<Author> Authors { get; set; }
     public DbSet<AuthorBook> AuthorBooks { get; set; }
     public DbSet<Publisher> Publishers { get; set; }
+    public DbSet<PriceChange> PriceChanges { get; set; }
 
     // Order management
     public DbSet<Order> Orders { get; set; }
@@ -237,6 +238,18 @@ public class BookStoreDbContext : DbContext
         modelBuilder.Entity<Permission>()
             .HasIndex(p => p.Code)
             .IsUnique();
+
+        // PriceChange mapping to existing table price_change
+        modelBuilder.Entity<PriceChange>(entity =>
+        {
+            entity.ToTable("price_change");
+            entity.HasKey(pc => new { pc.Isbn, pc.ChangedAt });
+            entity.Property(pc => pc.Isbn).HasColumnName("isbn");
+            entity.Property(pc => pc.OldPrice).HasColumnName("old_price").HasColumnType("decimal(12,2)");
+            entity.Property(pc => pc.NewPrice).HasColumnName("new_price").HasColumnType("decimal(12,2)");
+            entity.Property(pc => pc.ChangedAt).HasColumnName("changed_at");
+            entity.Property(pc => pc.EmployeeId).HasColumnName("employee_id");
+        });
 
         // Configure enum conversions
         modelBuilder.Entity<Author>()
