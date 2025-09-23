@@ -199,5 +199,21 @@ public static class SeedData
             context.Departments.AddRange(departments);
             await context.SaveChangesAsync();
         }
+
+        // Seed Purchase Order Statuses
+        if (!await context.PurchaseOrderStatuses.AnyAsync())
+        {
+            var statuses = new List<PurchaseOrderStatus>
+            {
+                new PurchaseOrderStatus { StatusId = 1, StatusName = "Pending", Description = "Đơn đặt mua đang chờ xử lý" },
+                new PurchaseOrderStatus { StatusId = 2, StatusName = "Sent", Description = "Đã gửi đơn đặt mua cho nhà cung cấp" },
+                new PurchaseOrderStatus { StatusId = 3, StatusName = "Confirmed", Description = "Nhà cung cấp đã xác nhận đơn hàng" },
+                new PurchaseOrderStatus { StatusId = 4, StatusName = "Delivered", Description = "Đã giao hàng" },
+                new PurchaseOrderStatus { StatusId = 5, StatusName = "Cancelled", Description = "Đã hủy đơn đặt mua" }
+            };
+
+            context.PurchaseOrderStatuses.AddRange(statuses);
+            await context.SaveChangesAsync();
+        }
     }
 }

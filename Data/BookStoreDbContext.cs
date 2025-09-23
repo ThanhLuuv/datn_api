@@ -39,6 +39,7 @@ public class BookStoreDbContext : DbContext
     public DbSet<PurchaseOrderLine> PurchaseOrderLines { get; set; }
     public DbSet<GoodsReceipt> GoodsReceipts { get; set; }
     public DbSet<GoodsReceiptLine> GoodsReceiptLines { get; set; }
+    public DbSet<PurchaseOrderStatus> PurchaseOrderStatuses { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -177,6 +178,12 @@ public class BookStoreDbContext : DbContext
             .HasConstraintName("fk_po_publisher");
 
         modelBuilder.Entity<PurchaseOrder>()
+            .HasOne(po => po.Status)
+            .WithMany(s => s.PurchaseOrders)
+            .HasForeignKey(po => po.StatusId)
+            .HasConstraintName("fk_purchase_order_status");
+
+        modelBuilder.Entity<PurchaseOrder>()
             .HasMany(po => po.PurchaseOrderLines)
             .WithOne(pol => pol.PurchaseOrder)
             .HasForeignKey(pol => pol.PoId)
@@ -241,6 +248,14 @@ public class BookStoreDbContext : DbContext
         // Configure enum conversions
         modelBuilder.Entity<Author>()
             .Property(a => a.Gender)
+            .HasConversion<string>();
+
+        modelBuilder.Entity<Employee>()
+            .Property(e => e.Gender)
+            .HasConversion<string>();
+
+        modelBuilder.Entity<Customer>()
+            .Property(c => c.Gender)
             .HasConversion<string>();
 
         // Configure check constraints

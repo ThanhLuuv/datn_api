@@ -11,6 +11,9 @@ public class PurchaseOrderDto
     public long CreatedBy { get; set; }
     public string CreatedByName { get; set; } = string.Empty;
     public string? Note { get; set; }
+    public long? StatusId { get; set; }
+    public string? StatusName { get; set; }
+    public string? OrderFileUrl { get; set; }
     public decimal TotalAmount { get; set; }
     public int TotalQuantity { get; set; }
     public List<PurchaseOrderLineDto> Lines { get; set; } = new List<PurchaseOrderLineDto>();
@@ -33,6 +36,7 @@ public class CreatePurchaseOrderDto
 
     [MaxLength(500, ErrorMessage = "Ghi chú không được vượt quá 500 ký tự")]
     public string? Note { get; set; }
+    public long? StatusId { get; set; }
 
     [Required(ErrorMessage = "Danh sách sách đặt mua là bắt buộc")]
     [MinLength(1, ErrorMessage = "Phải có ít nhất 1 sách trong đơn đặt mua")]
@@ -58,6 +62,7 @@ public class UpdatePurchaseOrderDto
 {
     [MaxLength(500, ErrorMessage = "Ghi chú không được vượt quá 500 ký tự")]
     public string? Note { get; set; }
+    public long? StatusId { get; set; }
 
     [Required(ErrorMessage = "Danh sách sách đặt mua là bắt buộc")]
     [MinLength(1, ErrorMessage = "Phải có ít nhất 1 sách trong đơn đặt mua")]
@@ -96,8 +101,15 @@ public class PurchaseOrderSearchRequest
     public long? CreatedBy { get; set; }
     public DateTime? FromDate { get; set; }
     public DateTime? ToDate { get; set; }
+    public long? StatusId { get; set; }
     public int PageNumber { get; set; } = 1;
     public int PageSize { get; set; } = 10;
     public string? SortBy { get; set; } = "OrderedAt";
     public string? SortDirection { get; set; } = "desc";
+}
+
+public class ChangePurchaseOrderStatusDto
+{
+    public long NewStatusId { get; set; }
+    public string? Note { get; set; }
 }

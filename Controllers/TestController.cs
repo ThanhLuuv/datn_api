@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
+using BookStore.Api.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace BookStore.Api.Controllers;
 
@@ -8,6 +10,12 @@ namespace BookStore.Api.Controllers;
 [Route("api/[controller]")]
 public class TestController : ControllerBase
 {
+    private readonly BookStoreDbContext _db;
+
+    public TestController(BookStoreDbContext db)
+    {
+        _db = db;
+    }
     /// <summary>
     /// Endpoint công khai - không cần authentication
     /// </summary>
@@ -51,6 +59,36 @@ public class TestController : ControllerBase
             message = "Đây là endpoint công khai, ai cũng có thể truy cập",
             timestamp = DateTime.UtcNow
         });
+    }
+
+    [HttpGet("employees")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetEmployees([FromQuery] string? email)
+    {
+        var query = _db.Employees.AsQueryable();
+        if (!string.IsNullOrWhiteSpace(email))
+        {
+            query = query.Where(e => e.Email == email);
+        }
+        var list = await query
+            .Select(e => new { e.EmployeeId, e.AccountId, e.DepartmentId, e.FirstName, e.LastName, e.Email })
+            .ToListAsync();
+        return Ok(new { count = list.Count, items = list });
+    }
+
+    [HttpGet("accounts")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetAccounts([FromQuery] string? email)
+    {
+        var query = _db.Accounts.AsQueryable();
+        if (!string.IsNullOrWhiteSpace(email))
+        {
+            query = query.Where(a => a.Email == email);
+        }
+        var list = await query
+            .Select(a => new { a.AccountId, a.Email, a.RoleId, a.IsActive })
+            .ToListAsync();
+        return Ok(new { count = list.Count, items = list });
     }
 
     /// <summary>

@@ -26,12 +26,22 @@ public class PurchaseOrder
     [Column("note")]
     public string? Note { get; set; }
 
+    [Column("status_id")]
+    public long? StatusId { get; set; }
+
+    [MaxLength(500)]
+    [Column("order_file_url")]
+    public string? OrderFileUrl { get; set; }
+
     // Navigation properties
     [ForeignKey("PublisherId")]
     public virtual Publisher Publisher { get; set; } = null!;
 
     [ForeignKey("CreatedBy")]
     public virtual Employee CreatedByEmployee { get; set; } = null!;
+
+    [ForeignKey("StatusId")]
+    public virtual PurchaseOrderStatus? Status { get; set; }
 
     public virtual ICollection<PurchaseOrderLine> PurchaseOrderLines { get; set; } = new List<PurchaseOrderLine>();
     public virtual ICollection<GoodsReceipt> GoodsReceipts { get; set; } = new List<GoodsReceipt>();
