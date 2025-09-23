@@ -58,24 +58,27 @@ public class RatingsController : ControllerBase
         var email = User.FindFirstValue(ClaimTypes.Email);
         if (email == null) return Unauthorized();
 
-        var account = await _db.Accounts.Include(a => a.Customer).FirstOrDefaultAsync(a => a.Email == email);
-        if (account?.Customer == null) return Forbid();
+        var customerId = await _db.Accounts
+            .Where(a => a.Email == email)
+            .Join(_db.Customers, a => a.AccountId, c => c.AccountId, (a, c) => c.CustomerId)
+            .SingleOrDefaultAsync();
+        if (customerId == 0) return Forbid();
 
         // Purchase verification: customer must have at least one delivered order containing this ISBN
         var purchased = await _db.OrderLines
             .Include(ol => ol.Order)
-            .AnyAsync(ol => ol.Isbn == dto.Isbn && ol.Order.CustomerId == account.Customer.CustomerId && ol.Order.Status == OrderStatus.Delivered);
+            .AnyAsync(ol => ol.Isbn == dto.Isbn && ol.Order.CustomerId == customerId && ol.Order.Status == OrderStatus.Delivered);
 
         if (!purchased)
             return Forbid("Bạn chỉ có thể đánh giá sách đã mua và giao thành công.");
 
         var now = DateTime.UtcNow;
-        var existing = await _db.Ratings.FirstOrDefaultAsync(r => r.Isbn == dto.Isbn && r.CustomerId == account.Customer.CustomerId);
+        var existing = await _db.Ratings.FirstOrDefaultAsync(r => r.Isbn == dto.Isbn && r.CustomerId == customerId);
         if (existing == null)
         {
             var rating = new Rating
             {
-                CustomerId = account.Customer.CustomerId,
+                CustomerId = customerId,
                 Isbn = dto.Isbn,
                 Stars = dto.Stars,
                 Comment = dto.Comment,

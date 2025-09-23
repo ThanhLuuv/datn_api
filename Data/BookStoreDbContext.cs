@@ -283,6 +283,10 @@ public class BookStoreDbContext : DbContext
             .Property(a => a.Gender)
             .HasConversion<string>();
 
+        modelBuilder.Entity<Customer>()
+            .Property(c => c.Gender)
+            .HasConversion<string>();
+
         // Configure check constraints
         modelBuilder.Entity<Book>()
             .HasCheckConstraint("book_chk_1", "page_count > 0")
