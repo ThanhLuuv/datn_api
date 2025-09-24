@@ -46,6 +46,12 @@ public class Book
     [Column("image_url")]
     public string? ImageUrl { get; set; }
 
+    [Column("stock")]
+    public int Stock { get; set; } = 0;
+
+    [Column("status")]
+    public bool Status { get; set; } = true;
+
     // Navigation properties
     [ForeignKey("CategoryId")]
     public virtual Category Category { get; set; } = null!;

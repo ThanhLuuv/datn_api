@@ -225,4 +225,30 @@ public class BookController : ControllerBase
 
         return BadRequest(result);
     }
+
+    /// <summary>
+    /// Tắt (ngừng kinh doanh) sách - chỉ cập nhật trạng thái về 0
+    /// </summary>
+    /// <param name="isbn">Mã ISBN</param>
+    [HttpPost("{isbn}/deactivate")]
+    [Authorize(Roles = "ADMIN")]
+    public async Task<ActionResult<ApiResponse<bool>>> DeactivateBook(string isbn)
+    {
+        var result = await _bookService.DeactivateBookAsync(isbn);
+        if (result.Success) return Ok(result);
+        return BadRequest(result);
+    }
+
+    /// <summary>
+    /// Bật (kinh doanh lại) sách - cập nhật trạng thái về 1
+    /// </summary>
+    /// <param name="isbn">Mã ISBN</param>
+    [HttpPost("{isbn}/activate")]
+    [Authorize(Roles = "ADMIN")]
+    public async Task<ActionResult<ApiResponse<bool>>> ActivateBook(string isbn)
+    {
+        var result = await _bookService.ActivateBookAsync(isbn);
+        if (result.Success) return Ok(result);
+        return BadRequest(result);
+    }
 }
