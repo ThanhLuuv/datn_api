@@ -296,6 +296,10 @@ public class GoodsReceiptService : IGoodsReceiptService
 
             await _context.SaveChangesAsync();
 
+            // Auto-update purchase order status to 4 (Delivered)
+            purchaseOrder.StatusId = 4;
+            await _context.SaveChangesAsync();
+
             // Load the created goods receipt with related data
             var createdGoodsReceipt = await _context.GoodsReceipts
                 .Include(gr => gr.PurchaseOrder)
@@ -426,6 +430,14 @@ public class GoodsReceiptService : IGoodsReceiptService
             }
 
             await _context.SaveChangesAsync();
+
+            // Ensure purchase order is marked as 4 (Delivered) after update as well
+            var po = await _context.PurchaseOrders.FirstOrDefaultAsync(p => p.PoId == goodsReceipt.PoId);
+            if (po != null)
+            {
+                po.StatusId = 4;
+                await _context.SaveChangesAsync();
+            }
 
             // Load the updated goods receipt with related data
             var updatedGoodsReceipt = await _context.GoodsReceipts

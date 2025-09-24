@@ -1,0 +1,220 @@
+### BookStore API Test File
+### Test các API endpoints đã implement
+
+### 1. Test Authentication APIs
+### Register a new user
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "email": "admin@bookstore.com",
+  "password": "Admin123!",
+  "confirmPassword": "Admin123!",
+  "roleId": 3
+}
+
+### Login
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@bookstore.com",
+  "password": "Admin123!"
+}
+
+### 2. Test Category APIs
+### Get all categories
+GET {{baseUrl}}/api/category
+Authorization: Bearer {{token}}
+
+### Create a new category
+POST {{baseUrl}}/api/category
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Tiểu thuyết",
+  "description": "Thể loại tiểu thuyết văn học"
+}
+
+### Get category by ID
+GET {{baseUrl}}/api/category/1
+Authorization: Bearer {{token}}
+
+### Update category
+PUT {{baseUrl}}/api/category/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Tiểu thuyết văn học",
+  "description": "Thể loại tiểu thuyết văn học và nghệ thuật"
+}
+
+### 3. Test Book APIs
+### Get all books
+GET {{baseUrl}}/api/book
+Authorization: Bearer {{token}}
+
+### Search books
+GET {{baseUrl}}/api/book?searchTerm=Harry&pageNumber=1&pageSize=10
+Authorization: Bearer {{token}}
+
+### Create a new author
+POST {{baseUrl}}/api/book/authors
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "firstName": "J.K.",
+  "lastName": "Rowling",
+  "gender": 0,
+  "dateOfBirth": "1965-07-31",
+  "email": "jkrowling@example.com"
+}
+
+### Create a new book
+POST {{baseUrl}}/api/book
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "isbn": "978-0-7475-3269-9",
+  "title": "Harry Potter and the Philosopher's Stone",
+  "pageCount": 223,
+  "unitPrice": 15.99,
+  "publishYear": 1997,
+  "categoryId": 1,
+  "publisherId": 1,
+  "imageUrl": "https://example.com/harry-potter.jpg",
+  "authorIds": [1]
+}
+
+### Get book by ISBN
+GET {{baseUrl}}/api/book/978-0-7475-3269-9
+Authorization: Bearer {{token}}
+
+### Update book
+PUT {{baseUrl}}/api/book/978-0-7475-3269-9
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "title": "Harry Potter and the Philosopher's Stone",
+  "pageCount": 223,
+  "unitPrice": 16.99,
+  "publishYear": 1997,
+  "categoryId": 1,
+  "publisherId": 1,
+  "imageUrl": "https://example.com/harry-potter.jpg",
+  "authorIds": [1]
+}
+
+### 4. Test Purchase Order APIs
+### Get all purchase orders
+GET {{baseUrl}}/api/purchaseorder
+Authorization: Bearer {{token}}
+
+### Create a new purchase order
+POST {{baseUrl}}/api/purchaseorder
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "publisherId": 1,
+  "note": "Đặt hàng sách mới cho tháng 12",
+  "lines": [
+    {
+      "isbn": "978-0-7475-3269-9",
+      "qtyOrdered": 100,
+      "unitPrice": 12.50
+    },
+    {
+      "isbn": "978-0-7475-3270-5",
+      "qtyOrdered": 50,
+      "unitPrice": 13.00
+    }
+  ]
+}
+
+### Get purchase order by ID
+GET {{baseUrl}}/api/purchaseorder/1
+Authorization: Bearer {{token}}
+
+### Update purchase order
+PUT {{baseUrl}}/api/purchaseorder/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "note": "Cập nhật ghi chú đơn đặt mua",
+  "lines": [
+    {
+      "isbn": "978-0-7475-3269-9",
+      "qtyOrdered": 150,
+      "unitPrice": 12.00
+    }
+  ]
+}
+
+### 5. Test Goods Receipt APIs
+### Get all goods receipts
+GET {{baseUrl}}/api/goodsreceipt
+Authorization: Bearer {{token}}
+
+### Get available purchase orders for goods receipt
+GET {{baseUrl}}/api/goodsreceipt/available-purchase-orders
+Authorization: Bearer {{token}}
+
+### Create a new goods receipt
+POST {{baseUrl}}/api/goodsreceipt
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "poId": 1,
+  "note": "Nhập hàng từ đơn đặt mua PO-1",
+  "lines": [
+    {
+      "qtyReceived": 100,
+      "unitCost": 12.00
+    },
+    {
+      "qtyReceived": 50,
+      "unitCost": 12.50
+    }
+  ]
+}
+
+### Get goods receipt by ID
+GET {{baseUrl}}/api/goodsreceipt/1
+Authorization: Bearer {{token}}
+
+### Update goods receipt
+PUT {{baseUrl}}/api/goodsreceipt/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "note": "Cập nhật ghi chú phiếu nhập",
+  "lines": [
+    {
+      "qtyReceived": 120,
+      "unitCost": 11.80
+    }
+  ]
+}
+
+### 6. Test Health Check
+### Health check
+GET {{baseUrl}}/health
+
+### Ready check
+GET {{baseUrl}}/health/ready
+
+### Live check
+GET {{baseUrl}}/health/live
+
+### Variables
+@baseUrl = https://localhost:7000
+@token = YOUR_JWT_TOKEN_HERE

@@ -693,12 +693,12 @@ public class PurchaseOrderService : IPurchaseOrderService
 
         // Header
         ws.Cell(1, 1).Value = "CÔNG TY TNHH NHÀ SÁCH TA";
-        ws.Range(1, 1, 1, 10).Merge().Style
+        ws.Range(1, 1, 1, 6).Merge().Style
             .Font.SetBold().Font.SetFontSize(16)
             .Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
 
         ws.Cell(3, 1).Value = "PHIẾU ĐẶT HÀNG";
-        ws.Range(3, 1, 3, 10).Merge().Style
+        ws.Range(3, 1, 3, 6).Merge().Style
             .Font.SetBold().Font.SetFontSize(14)
             .Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
 
@@ -709,74 +709,86 @@ public class PurchaseOrderService : IPurchaseOrderService
         ws.Cell(8, 1).Value = "Người lập đơn:";
         ws.Cell(9, 1).Value = "Email:";
 
-        ws.Cell(6, 3).Value = "123 Đường Lê Lợi, Quận 1, TP.HCM";
-        ws.Cell(7, 3).Value = "0301234567";
-        ws.Cell(8, 3).Value = po.CreatedByEmployee.FirstName + " " + po.CreatedByEmployee.LastName;
-        ws.Cell(9, 3).Value = "";
+        ws.Cell(6, 2).Value = "123 Đường Lê Lợi, Quận 1, TP.HCM";
+        ws.Cell(7, 2).Value = "0301234567";
+        ws.Cell(8, 2).Value = po.CreatedByEmployee.FirstName + " " + po.CreatedByEmployee.LastName;
+        ws.Cell(9, 2).Value = po.CreatedByEmployee.Email ?? string.Empty;
 
         // Publisher info
-        ws.Cell(5, 6).Value = "Thông tin nhà xuất bản:";
-        ws.Cell(6, 6).Value = "Tên NCC:";
-        ws.Cell(7, 6).Value = "Địa chỉ:";
-        ws.Cell(8, 6).Value = "Ngày lập đơn:";
-        ws.Cell(6, 7).Value = po.Publisher.Name;
-        ws.Cell(7, 7).Value = po.Publisher.Address ?? string.Empty;
-        ws.Cell(8, 7).Value = po.OrderedAt.ToString("d/M/yyyy");
+        ws.Cell(5, 4).Value = "Thông tin nhà xuất bản:";
+        ws.Cell(6, 4).Value = "Tên NCC:";
+        ws.Cell(7, 4).Value = "Địa chỉ:";
+        ws.Cell(8, 4).Value = "Ngày lập đơn:";
+        ws.Cell(6, 5).Value = po.Publisher.Name;
+        ws.Cell(7, 5).Value = po.Publisher.Address ?? string.Empty;
+        ws.Cell(8, 5).Value = po.OrderedAt.ToString("d/M/yyyy");
 
-        // Table header
+        // Table header - compact 6 columns with no gaps
         var startRow = 11;
         ws.Cell(startRow, 1).Value = "STT";
         ws.Cell(startRow, 2).Value = "Tên sản phẩm";
-        ws.Cell(startRow, 6).Value = "Đơn vị tính";
-        ws.Cell(startRow, 7).Value = "Số lượng";
-        ws.Cell(startRow, 8).Value = "Đơn giá (VND)";
-        ws.Cell(startRow, 9).Value = "Thành tiền (VND)";
+        ws.Cell(startRow, 3).Value = "Đơn vị tính";
+        ws.Cell(startRow, 4).Value = "Số lượng";
+        ws.Cell(startRow, 5).Value = "Đơn giá (VND)";
+        ws.Cell(startRow, 6).Value = "Thành tiền (VND)";
 
-		// Style header similar to image (yellow background, bold, borders)
-		var headerRange = ws.Range(startRow, 1, startRow, 9);
-		headerRange.Style.Fill.SetBackgroundColor(XLColor.Yellow);
-		headerRange.Style.Font.SetBold();
-		headerRange.Style.Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
-		headerRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
-		headerRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+        // Style header (yellow background, bold, borders)
+        var headerRange = ws.Range(startRow, 1, startRow, 6);
+        headerRange.Style.Fill.SetBackgroundColor(XLColor.Yellow);
+        headerRange.Style.Font.SetBold();
+        headerRange.Style.Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
+        headerRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        headerRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
 
+        // Rows
         var row = startRow + 1;
         int index = 1;
         foreach (var l in po.PurchaseOrderLines)
         {
             ws.Cell(row, 1).Value = index++;
             ws.Cell(row, 2).Value = l.Book.Title;
-            ws.Cell(row, 6).Value = "Cái";
-            ws.Cell(row, 7).Value = l.QtyOrdered;
-            ws.Cell(row, 8).Value = l.UnitPrice;
-            ws.Cell(row, 9).Value = l.QtyOrdered * l.UnitPrice;
-			ws.Range(row, 1, row, 9).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
-			ws.Range(row, 1, row, 9).Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+            ws.Cell(row, 3).Value = "Cái"; // ĐVT mặc định
+            ws.Cell(row, 4).Value = l.QtyOrdered;
+            ws.Cell(row, 5).Value = l.UnitPrice;
+            ws.Cell(row, 6).Value = l.QtyOrdered * l.UnitPrice;
+
+            // Number formats and alignment
+            ws.Cell(row, 4).Style.Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
+            ws.Cell(row, 5).Style.NumberFormat.Format = "#,##0";
+            ws.Cell(row, 6).Style.NumberFormat.Format = "#,##0";
+
             row++;
         }
 
+        // Borders for data region
+        var dataRange = ws.Range(startRow, 1, row - 1, 6);
+        dataRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        dataRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+
+        // Total
         var total = po.PurchaseOrderLines.Sum(l => l.QtyOrdered * l.UnitPrice);
-		ws.Cell(row + 1, 8).Value = "Tổng tiền hàng:";
-		ws.Cell(row + 1, 8).Style.Font.SetBold();
-		ws.Cell(row + 1, 9).Value = total;
-		ws.Cell(row + 1, 9).Style.NumberFormat.Format = "#,##0";
-		ws.Cell(row + 1, 9).Style.Font.SetBold();
+        ws.Cell(row + 1, 5).Value = "Tổng tiền hàng:";
+        ws.Cell(row + 1, 5).Style.Font.SetBold();
+        ws.Cell(row + 1, 6).Value = total;
+        ws.Cell(row + 1, 6).Style.NumberFormat.Format = "#,##0";
+        ws.Cell(row + 1, 6).Style.Font.SetBold();
 
-		// Payment method and bank account section
-		var infoStart = row + 3;
-		ws.Cell(infoStart, 1).Value = "Phương thức thanh toán:";
-		ws.Cell(infoStart, 3).Value = "Chuyển khoản";
-		ws.Cell(infoStart + 1, 1).Value = "Tài khoản ngân hàng:";
-		ws.Cell(infoStart + 1, 3).Value = "123456789 - Ngân hàng ACB - CN TP.HCM";
+        // Payment + bank info (compact)
+        var infoStart = row + 3;
+        ws.Cell(infoStart, 1).Value = "Phương thức thanh toán:";
+        ws.Cell(infoStart, 2).Value = "Chuyển khoản";
+        ws.Cell(infoStart + 1, 1).Value = "Tài khoản ngân hàng:";
+        ws.Cell(infoStart + 1, 2).Value = "123456789 - Ngân hàng ACB - CN TP.HCM";
 
-		// Signatures
-		var signStart = infoStart + 3;
-		ws.Cell(signStart, 1).Value = "Người lập đơn:";
-		ws.Cell(signStart, 7).Value = "Xác nhận của nhà xuất bản";
-		ws.Range(signStart + 1, 1, signStart + 3, 3).Style.Border.OutsideBorder = XLBorderStyleValues.Dashed;
-		ws.Range(signStart + 1, 7, signStart + 3, 9).Style.Border.OutsideBorder = XLBorderStyleValues.Dashed;
+        // Signatures
+        var signStart = infoStart + 3;
+        ws.Cell(signStart, 1).Value = "Người lập đơn:";
+        ws.Cell(signStart, 4).Value = "Xác nhận của nhà xuất bản";
+        ws.Range(signStart + 1, 1, signStart + 3, 2).Style.Border.OutsideBorder = XLBorderStyleValues.Dashed;
+        ws.Range(signStart + 1, 4, signStart + 3, 6).Style.Border.OutsideBorder = XLBorderStyleValues.Dashed;
 
-        ws.Columns().AdjustToContents();
+        // Auto size
+        ws.Columns(1, 6).AdjustToContents();
 
         using var ms = new MemoryStream();
         workbook.SaveAs(ms);
