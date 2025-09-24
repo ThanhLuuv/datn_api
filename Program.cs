@@ -44,7 +44,21 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-builder.Services.AddAuthorization();
+// Authorization with policies on 'permissions' claim (space-separated)
+builder.Services.AddAuthorization(options =>
+{
+    bool HasPerm(System.Security.Claims.ClaimsPrincipal user, string perm)
+        => user.HasClaim(c => c.Type == "permissions" && ($" {c.Value} ").Contains($" {perm} "));
+
+    options.AddPolicy("PERM_READ_CATEGORY", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_CATEGORY")));
+    options.AddPolicy("PERM_WRITE_CATEGORY", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_CATEGORY")));
+    options.AddPolicy("PERM_READ_BOOK", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_BOOK")));
+    options.AddPolicy("PERM_WRITE_BOOK", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_BOOK")));
+    options.AddPolicy("PERM_READ_PO", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_PURCHASE_ORDER")));
+    options.AddPolicy("PERM_WRITE_PO", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_PURCHASE_ORDER")));
+    options.AddPolicy("PERM_READ_GR", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_GOODS_RECEIPT")));
+    options.AddPolicy("PERM_WRITE_GR", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_GOODS_RECEIPT")));
+});
 
 // CORS Configuration
 builder.Services.AddCors(options =>

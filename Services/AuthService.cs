@@ -66,8 +66,14 @@ public class AuthService : IAuthService
                 .Reference(a => a.Role)
                 .LoadAsync();
 
-            // Generate JWT token
-            var token = _jwtService.GenerateToken(account);
+            // Load permissions for role
+            var permissions = await _context.RolePermissions
+                .Where(rp => rp.RoleId == account.RoleId)
+                .Select(rp => rp.Permission.Code)
+                .ToListAsync();
+
+            // Generate JWT token with permissions
+            var token = _jwtService.GenerateToken(account, permissions);
             var expireDays = 7; // Default from configuration
             
             return new ApiResponse<AuthResponseDto>
@@ -124,8 +130,14 @@ public class AuthService : IAuthService
                 };
             }
 
-            // Generate JWT token
-            var token = _jwtService.GenerateToken(account);
+            // Load permissions for role
+            var permissions = await _context.RolePermissions
+                .Where(rp => rp.RoleId == account.RoleId)
+                .Select(rp => rp.Permission.Code)
+                .ToListAsync();
+
+            // Generate JWT token with permissions
+            var token = _jwtService.GenerateToken(account, permissions);
             var expireDays = 7; // Default from configuration
 
             return new ApiResponse<AuthResponseDto>
