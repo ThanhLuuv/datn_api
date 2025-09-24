@@ -54,6 +54,7 @@ public class Customer
     public virtual Account Account { get; set; } = null!;
 
     public virtual ICollection<Order> Orders { get; set; } = new List<Order>();
+    public virtual ICollection<Rating> Ratings { get; set; } = new List<Rating>();
 
     // Computed property
     [NotMapped]
