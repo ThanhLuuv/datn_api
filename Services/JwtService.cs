@@ -15,12 +15,12 @@ public class JwtService : IJwtService
         _configuration = configuration;
     }
 
-    public string GenerateToken(Account account)
+    public string GenerateToken(Account account, IEnumerable<string>? permissions = null)
     {
-        return GenerateToken(account.Email, account.Role.Name, account.AccountId);
+        return GenerateToken(account.Email, account.Role.Name, account.AccountId, permissions);
     }
 
-    public string GenerateToken(string email, string role, long accountId = 0)
+    public string GenerateToken(string email, string role, long accountId = 0, IEnumerable<string>? permissions = null)
     {
         var jwtSettings = _configuration.GetSection("Jwt");
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["Key"]!));
@@ -38,6 +38,16 @@ public class JwtService : IJwtService
         if (accountId > 0)
         {
             claims.Add(new Claim(ClaimTypes.NameIdentifier, accountId.ToString()));
+        }
+
+        // permissions claim - space separated for compactness
+        if (permissions != null)
+        {
+            var scope = string.Join(' ', permissions.Distinct().OrderBy(x => x));
+            if (!string.IsNullOrWhiteSpace(scope))
+            {
+                claims.Add(new Claim("permissions", scope));
+            }
         }
 
         var expireDays = int.Parse(jwtSettings["ExpireDays"]!);
