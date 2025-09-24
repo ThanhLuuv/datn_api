@@ -216,6 +216,8 @@ public class GoodsReceiptService : IGoodsReceiptService
             // Validate purchase order exists
             var purchaseOrder = await _context.PurchaseOrders
                 .Include(po => po.Publisher)
+                .Include(po => po.PurchaseOrderLines)
+                    .ThenInclude(pol => pol.Book)
                 .FirstOrDefaultAsync(po => po.PoId == createGoodsReceiptDto.PoId);
 
             if (purchaseOrder == null)
@@ -280,20 +282,24 @@ public class GoodsReceiptService : IGoodsReceiptService
             _context.GoodsReceipts.Add(goodsReceipt);
             await _context.SaveChangesAsync();
 
-            // Add goods receipt lines
-            for (int i = 0; i < createGoodsReceiptDto.Lines.Count; i++)
+            // Add goods receipt lines and update stock by ordered lines order
+            var poLines = purchaseOrder.PurchaseOrderLines.OrderBy(l => l.PoLineId).ToList();
+            for (int i = 0; i < createGoodsReceiptDto.Lines.Count && i < poLines.Count; i++)
             {
                 var lineDto = createGoodsReceiptDto.Lines[i];
+                var poLine = poLines[i];
                 var goodsReceiptLine = new GoodsReceiptLine
                 {
                     GrId = goodsReceipt.GrId,
                     QtyReceived = lineDto.QtyReceived,
                     UnitCost = lineDto.UnitCost
                 };
-
                 _context.GoodsReceiptLines.Add(goodsReceiptLine);
-            }
 
+                // Update book stock
+                var book = poLine.Book;
+                book.Stock += lineDto.QtyReceived;
+            }
             await _context.SaveChangesAsync();
 
             // Auto-update purchase order status to 4 (Delivered)
@@ -405,21 +411,28 @@ public class GoodsReceiptService : IGoodsReceiptService
                 };
             }
 
-            // Update goods receipt
-            goodsReceipt.Note = updateGoodsReceiptDto.Note;
+            // Recalculate stock adjustments: remove old, add new
+            // To do this accurately we need the related purchase order lines
+            var poId = goodsReceipt.PoId;
+            var poLines = await _context.PurchaseOrderLines
+                .Include(pl => pl.Book)
+                .Where(pl => pl.PoId == poId)
+                .OrderBy(pl => pl.PoLineId)
+                .ToListAsync();
 
-            // Update goods receipt lines
-            var existingLines = goodsReceipt.GoodsReceiptLines.ToList();
-            
-            // Remove all existing lines
-            foreach (var line in existingLines)
+            // Rollback previous receipt quantities from stock
+            var oldLines = await _context.GoodsReceiptLines.Where(l => l.GrId == grId).ToListAsync();
+            for (int i = 0; i < oldLines.Count && i < poLines.Count; i++)
             {
-                _context.GoodsReceiptLines.Remove(line);
+                poLines[i].Book.Stock -= oldLines[i].QtyReceived;
             }
+            // Remove old lines
+            _context.GoodsReceiptLines.RemoveRange(oldLines);
 
-            // Add new lines
-            foreach (var lineDto in updateGoodsReceiptDto.Lines)
+            // Add new lines and apply stock
+            for (int i = 0; i < updateGoodsReceiptDto.Lines.Count && i < poLines.Count; i++)
             {
+                var lineDto = updateGoodsReceiptDto.Lines[i];
                 var newLine = new GoodsReceiptLine
                 {
                     GrId = goodsReceipt.GrId,
@@ -427,8 +440,10 @@ public class GoodsReceiptService : IGoodsReceiptService
                     UnitCost = lineDto.UnitCost
                 };
                 _context.GoodsReceiptLines.Add(newLine);
+                poLines[i].Book.Stock += lineDto.QtyReceived;
             }
 
+            goodsReceipt.Note = updateGoodsReceiptDto.Note;
             await _context.SaveChangesAsync();
 
             // Ensure purchase order is marked as 4 (Delivered) after update as well

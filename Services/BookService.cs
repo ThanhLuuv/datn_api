@@ -100,6 +100,8 @@ public class BookService : IBookService
                     ImageUrl = b.ImageUrl,
                     CreatedAt = b.CreatedAt,
                     UpdatedAt = b.UpdatedAt,
+                    Stock = b.Stock,
+                    Status = b.Status,
                     Authors = b.AuthorBooks.Select(ab => new AuthorDto
                     {
                         AuthorId = ab.Author.AuthorId,
@@ -163,6 +165,8 @@ public class BookService : IBookService
                     ImageUrl = b.ImageUrl,
                     CreatedAt = b.CreatedAt,
                     UpdatedAt = b.UpdatedAt,
+                    Stock = b.Stock,
+                    Status = b.Status,
                     Authors = b.AuthorBooks.Select(ab => new AuthorDto
                     {
                         AuthorId = ab.Author.AuthorId,
@@ -256,6 +260,8 @@ public class BookService : IBookService
                     ImageUrl = b.ImageUrl,
                     CreatedAt = b.CreatedAt,
                     UpdatedAt = b.UpdatedAt,
+                    Stock = b.Stock,
+                    Status = b.Status,
                     Authors = b.AuthorBooks.Select(ab => new AuthorDto
                     {
                         AuthorId = ab.Author.AuthorId,
@@ -402,6 +408,8 @@ public class BookService : IBookService
                     ImageUrl = b.ImageUrl,
                     CreatedAt = b.CreatedAt,
                     UpdatedAt = b.UpdatedAt,
+                    Stock = b.Stock,
+                    Status = b.Status,
                     Authors = b.AuthorBooks.Select(ab => new AuthorDto
                     {
                         AuthorId = ab.Author.AuthorId,
@@ -549,6 +557,8 @@ public class BookService : IBookService
                     ImageUrl = b.ImageUrl,
                     CreatedAt = b.CreatedAt,
                     UpdatedAt = b.UpdatedAt,
+                    Stock = b.Stock,
+                    Status = b.Status,
                     Authors = b.AuthorBooks.Select(ab => new AuthorDto
                     {
                         AuthorId = ab.Author.AuthorId,
@@ -608,13 +618,14 @@ public class BookService : IBookService
                 };
             }
 
-            _context.Books.Remove(book);
+            // Soft delete: set status = false (0)
+            book.Status = false;
             await _context.SaveChangesAsync();
 
             return new ApiResponse<bool>
             {
                 Success = true,
-                Message = "Xóa sách thành công",
+                Message = "Ngừng kinh doanh sách thành công",
                 Data = true
             };
         }
@@ -626,6 +637,54 @@ public class BookService : IBookService
                 Message = "Đã xảy ra lỗi khi xóa sách",
                 Errors = new List<string> { ex.Message }
             };
+        }
+    }
+
+    public async Task<ApiResponse<bool>> DeactivateBookAsync(string isbn)
+    {
+        try
+        {
+            var book = await _context.Books.FirstOrDefaultAsync(b => b.Isbn == isbn);
+            if (book == null)
+            {
+                return new ApiResponse<bool>
+                {
+                    Success = false,
+                    Message = "Không tìm thấy sách",
+                    Errors = new List<string> { "Sách không tồn tại" }
+                };
+            }
+            book.Status = false;
+            await _context.SaveChangesAsync();
+            return new ApiResponse<bool> { Success = true, Message = "Đã tắt sách", Data = true };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<bool> { Success = false, Message = "Đã xảy ra lỗi khi tắt sách", Errors = new List<string> { ex.Message } };
+        }
+    }
+
+    public async Task<ApiResponse<bool>> ActivateBookAsync(string isbn)
+    {
+        try
+        {
+            var book = await _context.Books.FirstOrDefaultAsync(b => b.Isbn == isbn);
+            if (book == null)
+            {
+                return new ApiResponse<bool>
+                {
+                    Success = false,
+                    Message = "Không tìm thấy sách",
+                    Errors = new List<string> { "Sách không tồn tại" }
+                };
+            }
+            book.Status = true;
+            await _context.SaveChangesAsync();
+            return new ApiResponse<bool> { Success = true, Message = "Đã bật sách", Data = true };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<bool> { Success = false, Message = "Đã xảy ra lỗi khi bật sách", Errors = new List<string> { ex.Message } };
         }
     }
 
