@@ -78,9 +78,19 @@ public class GoodsReceiptController : ControllerBase
             });
         }
 
-        // Get current user ID from JWT token
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier);
-        if (userIdClaim == null || !long.TryParse(userIdClaim.Value, out long userId))
+        // Get current user ID from JWT token (prefer numeric NameIdentifier claim)
+        var nameIdClaims = User.Claims.Where(c => c.Type == ClaimTypes.NameIdentifier).ToList();
+        string? accountIdClaim = null;
+        foreach (var c in nameIdClaims)
+        {
+            if (long.TryParse(c.Value, out _))
+            {
+                accountIdClaim = c.Value;
+                break;
+            }
+        }
+
+        if (string.IsNullOrEmpty(accountIdClaim) || !long.TryParse(accountIdClaim, out long userId))
         {
             return Unauthorized(new ApiResponse<GoodsReceiptDto>
             {
