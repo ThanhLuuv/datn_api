@@ -92,6 +92,7 @@ public class PurchaseOrderService : IPurchaseOrderService
                     Note = po.Note,
                     StatusId = po.StatusId,
                     StatusName = po.Status != null ? po.Status.StatusName : null,
+                    OrderFileUrl = po.OrderFileUrl,
                     TotalAmount = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered * pol.UnitPrice),
                     TotalQuantity = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered),
                     Lines = po.PurchaseOrderLines.Select(pol => new PurchaseOrderLineDto
@@ -155,6 +156,7 @@ public class PurchaseOrderService : IPurchaseOrderService
                     Note = po.Note,
                     StatusId = po.StatusId,
                     StatusName = po.Status != null ? po.Status.StatusName : null,
+                    OrderFileUrl = po.OrderFileUrl,
                     TotalAmount = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered * pol.UnitPrice),
                     TotalQuantity = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered),
                     Lines = po.PurchaseOrderLines.Select(pol => new PurchaseOrderLineDto
@@ -334,6 +336,7 @@ public class PurchaseOrderService : IPurchaseOrderService
                     Note = po.Note,
                     StatusId = po.StatusId,
                     StatusName = po.Status != null ? po.Status.StatusName : null,
+                    OrderFileUrl = po.OrderFileUrl,
                     TotalAmount = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered * pol.UnitPrice),
                     TotalQuantity = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered),
                     Lines = po.PurchaseOrderLines.Select(pol => new PurchaseOrderLineDto
