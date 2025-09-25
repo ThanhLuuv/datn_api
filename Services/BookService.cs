@@ -773,4 +773,61 @@ public class BookService : IBookService
             };
         }
     }
+
+    public async Task<ApiResponse<BookListResponse>> GetNewestBooksAsync(int limit = 10)
+    {
+        try
+        {
+            limit = Math.Clamp(limit, 1, 50);
+            var books = await _context.Books
+                .Include(b => b.Category)
+                .Include(b => b.Publisher)
+                .Include(b => b.AuthorBooks).ThenInclude(ab => ab.Author)
+                .OrderByDescending(b => b.CreatedAt)
+                .Take(limit)
+                .Select(b => new BookDto
+                {
+                    Isbn = b.Isbn,
+                    Title = b.Title,
+                    PageCount = b.PageCount,
+                    UnitPrice = b.UnitPrice,
+                    PublishYear = b.PublishYear,
+                    CategoryId = b.CategoryId,
+                    CategoryName = b.Category.Name,
+                    PublisherId = b.PublisherId,
+                    PublisherName = b.Publisher.Name,
+                    ImageUrl = b.ImageUrl,
+                    CreatedAt = b.CreatedAt,
+                    UpdatedAt = b.UpdatedAt,
+                    Stock = b.Stock,
+                    Status = b.Status,
+                    Authors = b.AuthorBooks.Select(ab => new AuthorDto
+                    {
+                        AuthorId = ab.Author.AuthorId,
+                        FirstName = ab.Author.FirstName,
+                        LastName = ab.Author.LastName,
+                        FullName = ab.Author.FirstName + " " + ab.Author.LastName,
+                        Gender = ab.Author.Gender,
+                        DateOfBirth = ab.Author.DateOfBirth
+                    }).ToList()
+                })
+                .ToListAsync();
+
+            return new ApiResponse<BookListResponse>
+            {
+                Success = true,
+                Message = "Lấy sách mới nhất thành công",
+                Data = new BookListResponse { Books = books, TotalCount = books.Count, PageNumber = 1, PageSize = books.Count, TotalPages = 1 }
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<BookListResponse>
+            {
+                Success = false,
+                Message = "Đã xảy ra lỗi khi lấy sách mới nhất",
+                Errors = new List<string> { ex.Message }
+            };
+        }
+    }
 }
