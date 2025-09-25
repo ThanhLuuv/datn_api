@@ -42,6 +42,7 @@ public class BookStoreDbContext : DbContext
     public DbSet<GoodsReceipt> GoodsReceipts { get; set; }
     public DbSet<GoodsReceiptLine> GoodsReceiptLines { get; set; }
     public DbSet<PurchaseOrderStatus> PurchaseOrderStatuses { get; set; }
+    public DbSet<PaymentTransaction> PaymentTransactions { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
