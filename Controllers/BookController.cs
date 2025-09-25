@@ -227,6 +227,18 @@ public class BookController : ControllerBase
     }
 
     /// <summary>
+    /// Lấy tối đa N sách mới nhất (mặc định 10)
+    /// </summary>
+    [HttpGet("newest")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<BookListResponse>>> GetNewest([FromQuery] int limit = 10)
+    {
+        var result = await _bookService.GetNewestBooksAsync(limit);
+        if (result.Success) return Ok(result);
+        return BadRequest(result);
+    }
+
+    /// <summary>
     /// Tắt (ngừng kinh doanh) sách - chỉ cập nhật trạng thái về 0
     /// </summary>
     /// <param name="isbn">Mã ISBN</param>

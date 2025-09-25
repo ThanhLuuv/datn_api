@@ -14,4 +14,5 @@ public interface IBookService
 	Task<ApiResponse<bool>> ActivateBookAsync(string isbn);
 	Task<ApiResponse<List<AuthorDto>>> GetAuthorsAsync();
 	Task<ApiResponse<AuthorDto>> CreateAuthorAsync(CreateAuthorDto createAuthorDto);
+    Task<ApiResponse<BookListResponse>> GetNewestBooksAsync(int limit = 10);
 }
