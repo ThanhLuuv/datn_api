@@ -2,6 +2,7 @@ using BookStore.Api.Data;
 using BookStore.Api.DTOs;
 using BookStore.Api.Models;
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 
 namespace BookStore.Api.Services;
 
@@ -12,6 +13,20 @@ public class BookService : IBookService
     public BookService(BookStoreDbContext context)
     {
         _context = context;
+    }
+
+    /// <summary>
+    /// Normalizes search term by removing extra whitespaces and trimming
+    /// </summary>
+    /// <param name="searchTerm">The search term to normalize</param>
+    /// <returns>Normalized search term</returns>
+    private static string NormalizeSearchTerm(string? searchTerm)
+    {
+        if (string.IsNullOrWhiteSpace(searchTerm))
+            return string.Empty;
+
+        // Remove extra whitespaces (replace multiple spaces with single space)
+        return Regex.Replace(searchTerm.Trim(), @"\s+", " ");
     }
 
     public async Task<ApiResponse<BookListResponse>> GetBooksAsync(BookSearchRequest searchRequest)
@@ -28,8 +43,12 @@ public class BookService : IBookService
             // Apply search filters
             if (!string.IsNullOrWhiteSpace(searchRequest.SearchTerm))
             {
-                query = query.Where(b => b.Title.Contains(searchRequest.SearchTerm) ||
-                                       b.Isbn.Contains(searchRequest.SearchTerm));
+                var normalizedSearchTerm = NormalizeSearchTerm(searchRequest.SearchTerm);
+                if (!string.IsNullOrWhiteSpace(normalizedSearchTerm))
+                {
+                    query = query.Where(b => b.Title.Contains(normalizedSearchTerm) ||
+                                           b.Isbn.Contains(normalizedSearchTerm));
+                }
             }
 
             if (searchRequest.CategoryId.HasValue)
@@ -233,10 +252,14 @@ public class BookService : IBookService
             // Apply search filter
             if (!string.IsNullOrWhiteSpace(searchTerm))
             {
-                query = query.Where(b => b.Title.Contains(searchTerm) || 
-                                       b.Category.Name.Contains(searchTerm) ||
-                                       b.AuthorBooks.Any(ab => ab.Author.FirstName.Contains(searchTerm) || 
-                                                              ab.Author.LastName.Contains(searchTerm)));
+                var normalizedSearchTerm = NormalizeSearchTerm(searchTerm);
+                if (!string.IsNullOrWhiteSpace(normalizedSearchTerm))
+                {
+                    query = query.Where(b => b.Title.Contains(normalizedSearchTerm) ||
+                                           b.Category.Name.Contains(normalizedSearchTerm) ||
+                                           b.AuthorBooks.Any(ab => ab.Author.FirstName.Contains(normalizedSearchTerm) ||
+                                                                  ab.Author.LastName.Contains(normalizedSearchTerm)));
+                }
             }
 
             var totalCount = await query.CountAsync();
