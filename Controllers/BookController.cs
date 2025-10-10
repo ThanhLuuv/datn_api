@@ -23,6 +23,7 @@ public class BookController : ControllerBase
     /// <param name="searchRequest">Tham số tìm kiếm</param>
     /// <returns>Danh sách sách</returns>
     [HttpGet]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<BookListResponse>>> GetBooks([FromQuery] BookSearchRequest searchRequest)
     {
         var result = await _bookService.GetBooksAsync(searchRequest);
@@ -79,13 +80,32 @@ public class BookController : ControllerBase
     }
 
     /// <summary>
-    /// Tạo sách mới
+    /// Tạo sách mới với upload ảnh
     /// </summary>
-    /// <param name="createBookDto">Thông tin sách mới</param>
+    /// <param name="isbn">ISBN của sách</param>
+    /// <param name="title">Tên sách</param>
+    /// <param name="categoryId">ID danh mục</param>
+    /// <param name="publisherId">ID nhà xuất bản</param>
+    /// <param name="unitPrice">Giá bán</param>
+    /// <param name="publishYear">Năm xuất bản</param>
+    /// <param name="pageCount">Số trang</param>
+    /// <param name="stock">Số lượng tồn kho</param>
+    /// <param name="authorIds">Danh sách ID tác giả (comma-separated)</param>
+    /// <param name="imageFile">File ảnh</param>
     /// <returns>Thông tin sách đã tạo</returns>
     [HttpPost]
     [Authorize(Roles = "ADMIN")]
-    public async Task<ActionResult<ApiResponse<BookDto>>> CreateBook([FromBody] CreateBookDto createBookDto)
+    public async Task<ActionResult<ApiResponse<BookDto>>> CreateBook(
+        [FromForm] string isbn,
+        [FromForm] string title,
+        [FromForm] long categoryId,
+        [FromForm] long publisherId,
+        [FromForm] decimal unitPrice,
+        [FromForm] int publishYear,
+        [FromForm] int pageCount,
+        [FromForm] int stock,
+        [FromForm] string authorIds,
+        [FromForm] IFormFile? imageFile)
     {
         if (!ModelState.IsValid)
         {
@@ -101,6 +121,30 @@ public class BookController : ControllerBase
                 Errors = errors
             });
         }
+
+        // Parse authorIds from comma-separated string
+        var authorIdList = new List<long>();
+        if (!string.IsNullOrWhiteSpace(authorIds))
+        {
+            authorIdList = authorIds.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(id => long.TryParse(id.Trim(), out var parsedId) ? parsedId : 0)
+                .Where(id => id > 0)
+                .ToList();
+        }
+
+        // Create CreateBookDto from form parameters
+        var createBookDto = new CreateBookDto
+        {
+            Isbn = isbn,
+            Title = title,
+            CategoryId = categoryId,
+            PublisherId = publisherId,
+            InitialPrice = unitPrice,
+            PublishYear = publishYear,
+            PageCount = pageCount,
+            AuthorIds = authorIdList,
+            ImageFile = imageFile
+        };
 
         var result = await _bookService.CreateBookAsync(createBookDto);
         
@@ -116,11 +160,29 @@ public class BookController : ControllerBase
     /// Cập nhật sách
     /// </summary>
     /// <param name="isbn">ISBN của sách</param>
-    /// <param name="updateBookDto">Thông tin cập nhật</param>
+    /// <param name="title">Tên sách</param>
+    /// <param name="categoryId">ID danh mục</param>
+    /// <param name="publisherId">ID nhà xuất bản</param>
+    /// <param name="unitPrice">Giá bán</param>
+    /// <param name="publishYear">Năm xuất bản</param>
+    /// <param name="pageCount">Số trang</param>
+    /// <param name="authorIds">Danh sách ID tác giả (comma-separated)</param>
+    /// <param name="imageUrl">URL ảnh hiện tại (nếu không upload ảnh mới)</param>
+    /// <param name="imageFile">File ảnh mới (nếu có)</param>
     /// <returns>Thông tin sách đã cập nhật</returns>
     [HttpPut("{isbn}")]
     [Authorize(Roles = "ADMIN")]
-    public async Task<ActionResult<ApiResponse<BookDto>>> UpdateBook(string isbn, [FromBody] UpdateBookDto updateBookDto)
+    public async Task<ActionResult<ApiResponse<BookDto>>> UpdateBook(
+        string isbn,
+        [FromForm] string title,
+        [FromForm] long categoryId,
+        [FromForm] long publisherId,
+        [FromForm] decimal unitPrice,
+        [FromForm] int publishYear,
+        [FromForm] int pageCount,
+        [FromForm] string authorIds,
+        [FromForm] string? imageUrl = null,
+        [FromForm] IFormFile? imageFile = null)
     {
         if (!ModelState.IsValid)
         {
@@ -136,6 +198,30 @@ public class BookController : ControllerBase
                 Errors = errors
             });
         }
+
+        // Parse authorIds from comma-separated string
+        var authorIdList = new List<long>();
+        if (!string.IsNullOrWhiteSpace(authorIds))
+        {
+            authorIdList = authorIds.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(id => long.TryParse(id.Trim(), out var parsedId) ? parsedId : 0)
+                .Where(id => id > 0)
+                .ToList();
+        }
+
+        // Create UpdateBookDto from form parameters
+        var updateBookDto = new UpdateBookDto
+        {
+            Title = title,
+            CategoryId = categoryId,
+            PublisherId = publisherId,
+            InitialPrice = unitPrice,
+            PublishYear = publishYear,
+            PageCount = pageCount,
+            AuthorIds = authorIdList,
+            ImageUrl = imageUrl,
+            ImageFile = imageFile
+        };
 
         var result = await _bookService.UpdateBookAsync(isbn, updateBookDto);
         
@@ -227,14 +313,78 @@ public class BookController : ControllerBase
     }
 
     /// <summary>
-    /// Lấy tối đa N sách mới nhất (mặc định 10)
+    /// Search books with advanced filtering and sorting
     /// </summary>
-    [HttpGet("newest")]
+    /// <param name="searchRequest">Search criteria</param>
+    /// <returns>List of books matching search criteria</returns>
+    [HttpGet("search")]
     [AllowAnonymous]
-    public async Task<ActionResult<ApiResponse<BookListResponse>>> GetNewest([FromQuery] int limit = 10)
+    public async Task<ActionResult<ApiResponse<BookListResponse>>> SearchBooks([FromQuery] BookSearchRequest searchRequest)
     {
-        var result = await _bookService.GetNewestBooksAsync(limit);
-        if (result.Success) return Ok(result);
+        var result = await _bookService.SearchBooksAsync(searchRequest);
+        
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+
+        return BadRequest(result);
+    }
+
+    /// <summary>
+    /// Get books with active promotions
+    /// </summary>
+    /// <param name="limit">Number of books to return (default: 10)</param>
+    /// <returns>List of books with promotions</returns>
+    [HttpGet("promotions")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<List<BookDto>>>> GetBooksWithPromotion([FromQuery] int limit = 10)
+    {
+        var result = await _bookService.GetBooksWithPromotionAsync(limit);
+        
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+
+        return BadRequest(result);
+    }
+
+    /// <summary>
+    /// Get best selling books
+    /// </summary>
+    /// <param name="limit">Number of books to return (default: 10)</param>
+    /// <returns>List of best selling books</returns>
+    [HttpGet("bestsellers")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<List<BookDto>>>> GetBestSellingBooks([FromQuery] int limit = 10)
+    {
+        var result = await _bookService.GetBestSellingBooksAsync(limit);
+        
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+
+        return BadRequest(result);
+    }
+
+    /// <summary>
+    /// Get latest books
+    /// </summary>
+    /// <param name="limit">Number of books to return (default: 10)</param>
+    /// <returns>List of latest books</returns>
+    [HttpGet("latest")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<List<BookDto>>>> GetLatestBooks([FromQuery] int limit = 10)
+    {
+        var result = await _bookService.GetLatestBooksAsync(limit);
+        
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+
         return BadRequest(result);
     }
 
@@ -262,5 +412,72 @@ public class BookController : ControllerBase
         var result = await _bookService.ActivateBookAsync(isbn);
         if (result.Success) return Ok(result);
         return BadRequest(result);
+    }
+
+    /// <summary>
+    /// Test API hoạt động
+    /// </summary>
+    /// <returns>Thông báo API hoạt động</returns>
+    [HttpGet("test")]
+    [AllowAnonymous]
+    public ActionResult<ApiResponse<string>> TestApi()
+    {
+        return Ok(new ApiResponse<string>
+        {
+            Success = true,
+            Message = "API hoạt động bình thường",
+            Data = "Book API is running!"
+        });
+    }
+
+    /// <summary>
+    /// Test upload ảnh lên Cloudinary
+    /// </summary>
+    /// <param name="imageFile">File ảnh</param>
+    /// <returns>URL ảnh từ Cloudinary</returns>
+    [HttpPost("test-upload-image")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<string>>> TestUploadImage([FromForm] IFormFile imageFile)
+    {
+        if (imageFile == null || imageFile.Length == 0)
+        {
+            return BadRequest(new ApiResponse<string>
+            {
+                Success = false,
+                Message = "Không có file ảnh được gửi",
+                Errors = new List<string> { "File ảnh là bắt buộc" }
+            });
+        }
+
+        try
+        {
+            var imageUrl = await _bookService.UploadImageToCloudinaryAsync(imageFile, "test");
+            
+            if (string.IsNullOrEmpty(imageUrl))
+            {
+                return BadRequest(new ApiResponse<string>
+                {
+                    Success = false,
+                    Message = "Không thể upload ảnh lên Cloudinary",
+                    Errors = new List<string> { "Có lỗi xảy ra khi upload ảnh" }
+                });
+            }
+
+            return Ok(new ApiResponse<string>
+            {
+                Success = true,
+                Message = "Upload ảnh thành công",
+                Data = imageUrl
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new ApiResponse<string>
+            {
+                Success = false,
+                Message = "Đã xảy ra lỗi khi upload ảnh",
+                Errors = new List<string> { ex.Message }
+            });
+        }
     }
 }

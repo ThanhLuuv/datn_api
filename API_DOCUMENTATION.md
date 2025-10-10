@@ -941,6 +941,186 @@ GET /api/test/staff-only
 
 ---
 
+## 🎯 7. PROMOTION APIs
+
+### 7.1 Lấy danh sách khuyến mãi
+```http
+GET /api/promotion
+```
+**Authentication:** Cần (ADMIN, EMPLOYEE)
+**Query:** `Name`, `MinDiscountPct`, `MaxDiscountPct`, `StartDate`, `EndDate`, `Status` (active|upcoming|expired|all), `IssuedBy`, `BookIsbn`, `Page`, `PageSize`, `SortBy`, `SortOrder`
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Lấy danh sách khuyến mãi thành công",
+  "data": {
+    "promotions": [
+      {
+        "promotionId": 1,
+        "name": "Sale T10",
+        "description": "Giảm 15%",
+        "discountPct": 15.0,
+        "startDate": "2025-10-01",
+        "endDate": "2025-10-31",
+        "issuedBy": 2,
+        "issuedByName": "Sales User",
+        "createdAt": "2025-10-01T00:00:00Z",
+        "updatedAt": "2025-10-01T00:00:00Z",
+        "books": []
+      }
+    ],
+    "totalCount": 1,
+    "pageNumber": 1,
+    "pageSize": 10,
+    "totalPages": 1
+  }
+}
+```
+
+### 7.2 Lấy chi tiết khuyến mãi
+```http
+GET /api/promotion/{promotionId}
+```
+**Authentication:** Cần (ADMIN, EMPLOYEE)
+
+### 7.3 Tạo khuyến mãi
+```http
+POST /api/promotion
+```
+**Authentication:** Cần (ADMIN, SALES_EMPLOYEE)
+**Body:**
+```json
+{
+  "name": "Sale T10",
+  "description": "Giảm 15%",
+  "discountPct": 15.0,
+  "startDate": "2025-10-05",
+  "endDate": "2025-10-31",
+  "bookIsbns": ["978-604-1-00001-1", "978-604-1-00002-2"]
+}
+```
+
+### 7.4 Cập nhật khuyến mãi
+```http
+PUT /api/promotion/{promotionId}
+```
+**Authentication:** Cần (ADMIN, SALES_EMPLOYEE)
+**Body:** cùng cấu trúc với tạo mới
+
+### 7.5 Xóa khuyến mãi
+```http
+DELETE /api/promotion/{promotionId}
+```
+**Authentication:** Cần (ADMIN)
+
+### 7.6 Thống kê khuyến mãi
+```http
+GET /api/promotion/stats
+```
+**Authentication:** Cần (ADMIN, EMPLOYEE)
+
+### 7.7 Danh sách sách đang có khuyến mãi (Public)
+```http
+GET /api/promotion/active-books
+```
+**Authentication:** Không cần
+
+### 7.8 Danh sách khuyến mãi theo ISBN (Public)
+```http
+GET /api/promotion/book/{isbn}
+```
+**Authentication:** Không cần
+
+---
+
+## 🧾 8. CUSTOMER ORDER APIs
+
+### 8.1 Lấy danh sách đơn hàng
+```http
+GET /api/order
+```
+**Authentication:** Cần (ADMIN, EMPLOYEE, DELIVERY_EMPLOYEE)
+**Query:** `keyword`, `customerId`, `status` (Pending|Assigned|Delivered), `fromDate`, `toDate`, `pageNumber`, `pageSize`
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Lấy danh sách đơn hàng thành công",
+  "data": {
+    "orders": [
+      {
+        "orderId": 1,
+        "customerId": 10,
+        "customerName": "Nguyen Van A",
+        "placedAt": "2025-10-01T03:00:00Z",
+        "receiverName": "B",
+        "receiverPhone": "0900000000",
+        "shippingAddress": "HN",
+        "deliveryDate": null,
+        "status": "Pending",
+        "approvedBy": null,
+        "deliveredBy": null,
+        "totalAmount": 300.0,
+        "totalQuantity": 3,
+        "lines": []
+      }
+    ],
+    "totalCount": 1,
+    "pageNumber": 1,
+    "pageSize": 10,
+    "totalPages": 1
+  }
+}
+```
+
+### 8.2 Lấy chi tiết đơn hàng
+```http
+GET /api/order/{orderId}
+```
+**Authentication:** Cần (ADMIN, EMPLOYEE, DELIVERY_EMPLOYEE)
+
+### 8.3 Duyệt/Không duyệt đơn
+```http
+POST /api/order/{orderId}/approve
+```
+**Authentication:** Cần (ADMIN, EMPLOYEE)
+**Body:**
+```json
+{
+  "approved": true,
+  "note": "Đồng ý"
+}
+```
+
+### 8.4 Phân công giao hàng
+```http
+POST /api/order/{orderId}/assign-delivery
+```
+**Authentication:** Cần (ADMIN, EMPLOYEE)
+**Body:**
+```json
+{
+  "deliveryEmployeeId": 2,
+  "deliveryDate": "2025-10-03T00:00:00Z"
+}
+```
+
+### 8.5 Xác nhận giao hàng thành công
+```http
+POST /api/order/{orderId}/confirm-delivered
+```
+**Authentication:** Cần (ADMIN, DELIVERY_EMPLOYEE)
+**Body:**
+```json
+{
+  "success": true,
+  "note": "Đã giao khách"
+}
+```
+
+---
+
 ## 📖 8. SWAGGER UI
 
 ### 8.1 Swagger Documentation

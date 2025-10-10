@@ -18,7 +18,13 @@ public class BookStoreDbContext : DbContext
     // User management
     public DbSet<Customer> Customers { get; set; }
     public DbSet<Employee> Employees { get; set; }
+    
+    // Shopping cart
+    public DbSet<Cart> Carts { get; set; }
+    public DbSet<CartItem> CartItems { get; set; }
     public DbSet<Department> Departments { get; set; }
+    public DbSet<Area> Areas { get; set; }
+    public DbSet<EmployeeArea> EmployeeAreas { get; set; }
 
     // Product management
     public DbSet<Category> Categories { get; set; }
@@ -44,9 +50,18 @@ public class BookStoreDbContext : DbContext
     public DbSet<PurchaseOrderStatus> PurchaseOrderStatuses { get; set; }
     public DbSet<PaymentTransaction> PaymentTransactions { get; set; }
 
+    // Promotion management
+    public DbSet<Promotion> Promotions { get; set; }
+    public DbSet<BookPromotion> BookPromotions { get; set; }
+    public DbSet<MonthlyRevenueRow> MonthlyRevenueRows { get; set; }
+    public DbSet<QuarterlyRevenueRow> QuarterlyRevenueRows { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        // Keyless entity for stored procedure mapping
+        modelBuilder.Entity<MonthlyRevenueRow>().HasNoKey();
+        modelBuilder.Entity<QuarterlyRevenueRow>().HasNoKey();
 
         // Configure Account relationships
         modelBuilder.Entity<Account>()
@@ -81,6 +96,27 @@ public class BookStoreDbContext : DbContext
             .HasForeignKey(e => e.DepartmentId)
             .HasConstraintName("fk_emp_department");
 
+        // Configure Employee-Area many-to-many relationship
+        modelBuilder.Entity<EmployeeArea>()
+            .HasKey(ea => ea.EmployeeAreaId);
+
+        modelBuilder.Entity<EmployeeArea>()
+            .HasOne(ea => ea.Employee)
+            .WithMany(e => e.EmployeeAreas)
+            .HasForeignKey(ea => ea.EmployeeId)
+            .HasConstraintName("fk_employee_area_employee");
+
+        modelBuilder.Entity<EmployeeArea>()
+            .HasOne(ea => ea.Area)
+            .WithMany(a => a.EmployeeAreas)
+            .HasForeignKey(ea => ea.AreaId)
+            .HasConstraintName("fk_employee_area_area");
+
+        // Unique constraint to prevent duplicate assignments
+        modelBuilder.Entity<EmployeeArea>()
+            .HasIndex(ea => new { ea.EmployeeId, ea.AreaId })
+            .IsUnique();
+
         modelBuilder.Entity<Employee>()
             .HasMany(e => e.CreatedPurchaseOrders)
             .WithOne(po => po.CreatedByEmployee)
@@ -105,6 +141,12 @@ public class BookStoreDbContext : DbContext
             .HasForeignKey(o => o.DeliveredBy)
             .HasConstraintName("fk_order_delivered_by");
 
+        modelBuilder.Entity<Employee>()
+            .HasMany(e => e.IssuedPromotions)
+            .WithOne(p => p.IssuedByEmployee)
+            .HasForeignKey(p => p.IssuedBy)
+            .HasConstraintName("fk_promotion_employee");
+
         // Configure Book relationships
         modelBuilder.Entity<Book>()
             .HasOne(b => b.Category)
@@ -117,6 +159,22 @@ public class BookStoreDbContext : DbContext
             .WithMany(p => p.Books)
             .HasForeignKey(b => b.PublisherId)
             .HasConstraintName("fk_book_publisher");
+
+        // Configure Book-Promotion many-to-many
+        modelBuilder.Entity<BookPromotion>()
+            .HasKey(bp => new { bp.Isbn, bp.PromotionId });
+
+        modelBuilder.Entity<BookPromotion>()
+            .HasOne(bp => bp.Book)
+            .WithMany(b => b.BookPromotions)
+            .HasForeignKey(bp => bp.Isbn)
+            .HasConstraintName("fk_bookpromotion_book");
+
+        modelBuilder.Entity<BookPromotion>()
+            .HasOne(bp => bp.Promotion)
+            .WithMany(p => p.BookPromotions)
+            .HasForeignKey(bp => bp.PromotionId)
+            .HasConstraintName("fk_bookpromotion_promotion");
 
         // Configure Author-Book many-to-many
         modelBuilder.Entity<AuthorBook>()
@@ -248,16 +306,31 @@ public class BookStoreDbContext : DbContext
             .HasIndex(p => p.Code)
             .IsUnique();
 
-        // PriceChange mapping to existing table price_change
+        modelBuilder.Entity<Promotion>()
+            .HasIndex(p => p.Name)
+            .IsUnique();
+
+        // PriceChange mapping - composite key (Isbn, ChangedAt)
         modelBuilder.Entity<PriceChange>(entity =>
         {
             entity.ToTable("price_change");
             entity.HasKey(pc => new { pc.Isbn, pc.ChangedAt });
-            entity.Property(pc => pc.Isbn).HasColumnName("isbn");
+            entity.Property(pc => pc.Isbn).HasColumnName("isbn").HasMaxLength(20);
             entity.Property(pc => pc.OldPrice).HasColumnName("old_price").HasColumnType("decimal(12,2)");
             entity.Property(pc => pc.NewPrice).HasColumnName("new_price").HasColumnType("decimal(12,2)");
             entity.Property(pc => pc.ChangedAt).HasColumnName("changed_at");
             entity.Property(pc => pc.EmployeeId).HasColumnName("employee_id");
+            // No 'reason' column in DB
+
+            entity.HasOne(pc => pc.Book)
+                .WithMany(b => b.PriceChanges)
+                .HasForeignKey(pc => pc.Isbn)
+                .HasConstraintName("fk_price_change_book");
+
+            entity.HasOne(pc => pc.Employee)
+                .WithMany()
+                .HasForeignKey(pc => pc.EmployeeId)
+                .HasConstraintName("fk_price_change_employee");
         });
 
         // Rating mapping
@@ -301,7 +374,7 @@ public class BookStoreDbContext : DbContext
         // Configure check constraints
         modelBuilder.Entity<Book>()
             .HasCheckConstraint("book_chk_1", "page_count > 0")
-            .HasCheckConstraint("book_chk_2", "unit_price >= 0");
+            .HasCheckConstraint("book_chk_2", "average_price >= 0");
 
         modelBuilder.Entity<OrderLine>()
             .HasCheckConstraint("order_line_chk_1", "qty > 0")
@@ -322,6 +395,50 @@ public class BookStoreDbContext : DbContext
         modelBuilder.Entity<Invoice>()
             .HasCheckConstraint("invoice_chk_1", "total_amount >= 0")
             .HasCheckConstraint("invoice_chk_2", "tax_amount >= 0");
+
+        modelBuilder.Entity<Promotion>()
+            .HasCheckConstraint("promotion_chk_1", "discount_pct > 0 AND discount_pct < 100")
+            .HasCheckConstraint("promotion_chk_2", "start_date <= end_date");
+
+        // Cart configuration
+        modelBuilder.Entity<Cart>(entity =>
+        {
+            entity.ToTable("cart");
+            entity.HasKey(c => c.CartId);
+            entity.Property(c => c.CartId).HasColumnName("cart_id").ValueGeneratedOnAdd();
+            entity.Property(c => c.CustomerId).HasColumnName("customer_id");
+            entity.Property(c => c.CreatedAt).HasColumnName("created_at");
+            entity.Property(c => c.UpdatedAt).HasColumnName("updated_at");
+
+            entity.HasOne(c => c.Customer)
+                .WithMany()
+                .HasForeignKey(c => c.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CartItem>(entity =>
+        {
+            entity.ToTable("cart_item");
+            entity.HasKey(ci => ci.CartItemId);
+            entity.Property(ci => ci.CartItemId).HasColumnName("cart_item_id").ValueGeneratedOnAdd();
+            entity.Property(ci => ci.CartId).HasColumnName("cart_id");
+            entity.Property(ci => ci.Isbn).HasColumnName("isbn").HasMaxLength(20);
+            entity.Property(ci => ci.Quantity).HasColumnName("quantity");
+            entity.Property(ci => ci.AddedAt).HasColumnName("added_at");
+            entity.Property(ci => ci.UpdatedAt).HasColumnName("updated_at");
+
+            entity.HasOne(ci => ci.Cart)
+                .WithMany(c => c.CartItems)
+                .HasForeignKey(ci => ci.CartId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(ci => ci.Book)
+                .WithMany()
+                .HasForeignKey(ci => ci.Isbn)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasCheckConstraint("cart_item_chk_1", "quantity > 0");
+        });
 
         // Seed default roles
         modelBuilder.Entity<Role>().HasData(

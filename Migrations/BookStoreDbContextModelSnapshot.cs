@@ -69,6 +69,31 @@ namespace BookStore.Api.Migrations
                     b.ToTable("account");
                 });
 
+            modelBuilder.Entity("BookStore.Api.Models.Area", b =>
+                {
+                    b.Property<long>("AreaId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("area_id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("AreaId"));
+
+                    b.Property<string>("Keywords")
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(300)")
+                        .HasColumnName("keywords");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("varchar(150)")
+                        .HasColumnName("name");
+
+                    b.HasKey("AreaId");
+
+                    b.ToTable("area");
+                });
+
             modelBuilder.Entity("BookStore.Api.Models.Author", b =>
                 {
                     b.Property<long>("AuthorId")
@@ -139,6 +164,10 @@ namespace BookStore.Api.Migrations
                         .HasColumnType("varchar(20)")
                         .HasColumnName("isbn");
 
+                    b.Property<decimal>("AveragePrice")
+                        .HasColumnType("decimal(12,2)")
+                        .HasColumnName("average_price");
+
                     b.Property<long>("CategoryId")
                         .HasColumnType("bigint")
                         .HasColumnName("category_id");
@@ -164,15 +193,19 @@ namespace BookStore.Api.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("publisher_id");
 
+                    b.Property<bool>("Status")
+                        .HasColumnType("tinyint(1)")
+                        .HasColumnName("status");
+
+                    b.Property<int>("Stock")
+                        .HasColumnType("int")
+                        .HasColumnName("stock");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(300)
                         .HasColumnType("varchar(300)")
                         .HasColumnName("title");
-
-                    b.Property<decimal>("UnitPrice")
-                        .HasColumnType("decimal(12,2)")
-                        .HasColumnName("unit_price");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("datetime(6)")
@@ -188,7 +221,96 @@ namespace BookStore.Api.Migrations
                         {
                             t.HasCheckConstraint("book_chk_1", "page_count > 0");
 
-                            t.HasCheckConstraint("book_chk_2", "unit_price >= 0");
+                            t.HasCheckConstraint("book_chk_2", "average_price >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("BookStore.Api.Models.BookPromotion", b =>
+                {
+                    b.Property<string>("Isbn")
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("isbn");
+
+                    b.Property<long>("PromotionId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("promotion_id");
+
+                    b.HasKey("Isbn", "PromotionId");
+
+                    b.HasIndex("PromotionId");
+
+                    b.ToTable("book_promotion");
+                });
+
+            modelBuilder.Entity("BookStore.Api.Models.Cart", b =>
+                {
+                    b.Property<long>("CartId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("cart_id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("CartId"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at");
+
+                    b.Property<long>("CustomerId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("customer_id");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("CartId");
+
+                    b.HasIndex("CustomerId");
+
+                    b.ToTable("cart", (string)null);
+                });
+
+            modelBuilder.Entity("BookStore.Api.Models.CartItem", b =>
+                {
+                    b.Property<long>("CartItemId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("cart_item_id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("CartItemId"));
+
+                    b.Property<DateTime>("AddedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("added_at");
+
+                    b.Property<long>("CartId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("cart_id");
+
+                    b.Property<string>("Isbn")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("isbn");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("int")
+                        .HasColumnName("quantity");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("CartItemId");
+
+                    b.HasIndex("CartId");
+
+                    b.HasIndex("Isbn");
+
+                    b.ToTable("cart_item", null, t =>
+                        {
+                            t.HasCheckConstraint("cart_item_chk_1", "quantity > 0");
                         });
                 });
 
@@ -257,8 +379,9 @@ namespace BookStore.Api.Migrations
                         .HasColumnType("varchar(100)")
                         .HasColumnName("first_name");
 
-                    b.Property<int>("Gender")
-                        .HasColumnType("int")
+                    b.Property<string>("Gender")
+                        .IsRequired()
+                        .HasColumnType("longtext")
                         .HasColumnName("gender");
 
                     b.Property<string>("LastName")
@@ -358,8 +481,9 @@ namespace BookStore.Api.Migrations
                         .HasColumnType("varchar(100)")
                         .HasColumnName("first_name");
 
-                    b.Property<int>("Gender")
-                        .HasColumnType("int")
+                    b.Property<string>("Gender")
+                        .IsRequired()
+                        .HasColumnType("longtext")
                         .HasColumnName("gender");
 
                     b.Property<string>("LastName")
@@ -385,6 +509,41 @@ namespace BookStore.Api.Migrations
                     b.HasIndex("DepartmentId");
 
                     b.ToTable("employee");
+                });
+
+            modelBuilder.Entity("BookStore.Api.Models.EmployeeArea", b =>
+                {
+                    b.Property<long>("EmployeeAreaId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("employee_area_id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("EmployeeAreaId"));
+
+                    b.Property<long>("AreaId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("area_id");
+
+                    b.Property<DateTime>("AssignedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("assigned_at");
+
+                    b.Property<long>("EmployeeId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("employee_id");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("tinyint(1)")
+                        .HasColumnName("is_active");
+
+                    b.HasKey("EmployeeAreaId");
+
+                    b.HasIndex("AreaId");
+
+                    b.HasIndex("EmployeeId", "AreaId")
+                        .IsUnique();
+
+                    b.ToTable("employee_area");
                 });
 
             modelBuilder.Entity("BookStore.Api.Models.GoodsReceipt", b =>
@@ -492,6 +651,20 @@ namespace BookStore.Api.Migrations
                         });
                 });
 
+            modelBuilder.Entity("BookStore.Api.Models.MonthlyRevenueRow", b =>
+                {
+                    b.Property<int>("Month")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("Revenue")
+                        .HasColumnType("decimal(65,30)");
+
+                    b.Property<int>("Year")
+                        .HasColumnType("int");
+
+                    b.ToTable("MonthlyRevenueRows");
+                });
+
             modelBuilder.Entity("BookStore.Api.Models.Order", b =>
                 {
                     b.Property<long>("OrderId")
@@ -595,6 +768,77 @@ namespace BookStore.Api.Migrations
                         });
                 });
 
+            modelBuilder.Entity("BookStore.Api.Models.PaymentTransaction", b =>
+                {
+                    b.Property<long>("TransactionId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("transaction_id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("TransactionId"));
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("decimal(18,2)")
+                        .HasColumnName("amount");
+
+                    b.Property<string>("CheckoutUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)")
+                        .HasColumnName("checkout_url");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("varchar(10)")
+                        .HasColumnName("currency");
+
+                    b.Property<long>("OrderId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("order_id");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("provider");
+
+                    b.Property<string>("ProviderTxnId")
+                        .HasMaxLength(191)
+                        .HasColumnType("varchar(191)")
+                        .HasColumnName("provider_txn_id");
+
+                    b.Property<string>("RawRequest")
+                        .HasColumnType("json")
+                        .HasColumnName("raw_request");
+
+                    b.Property<string>("RawResponse")
+                        .HasColumnType("json")
+                        .HasColumnName("raw_response");
+
+                    b.Property<string>("ReturnUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)")
+                        .HasColumnName("return_url");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("TransactionId");
+
+                    b.ToTable("payment_transaction");
+                });
+
             modelBuilder.Entity("BookStore.Api.Models.Permission", b =>
                 {
                     b.Property<long>("PermissionId")
@@ -632,7 +876,8 @@ namespace BookStore.Api.Migrations
             modelBuilder.Entity("BookStore.Api.Models.PriceChange", b =>
                 {
                     b.Property<string>("Isbn")
-                        .HasColumnType("varchar(255)")
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
                         .HasColumnName("isbn");
 
                     b.Property<DateTime>("ChangedAt")
@@ -653,7 +898,68 @@ namespace BookStore.Api.Migrations
 
                     b.HasKey("Isbn", "ChangedAt");
 
+                    b.HasIndex("EmployeeId");
+
                     b.ToTable("price_change", (string)null);
+                });
+
+            modelBuilder.Entity("BookStore.Api.Models.Promotion", b =>
+                {
+                    b.Property<long>("PromotionId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("promotion_id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("PromotionId"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)")
+                        .HasColumnName("description");
+
+                    b.Property<decimal>("DiscountPct")
+                        .HasColumnType("decimal(5,2)")
+                        .HasColumnName("discount_pct");
+
+                    b.Property<DateOnly>("EndDate")
+                        .HasColumnType("date")
+                        .HasColumnName("end_date");
+
+                    b.Property<long>("IssuedBy")
+                        .HasColumnType("bigint")
+                        .HasColumnName("issued_by");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)")
+                        .HasColumnName("name");
+
+                    b.Property<DateOnly>("StartDate")
+                        .HasColumnType("date")
+                        .HasColumnName("start_date");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("PromotionId");
+
+                    b.HasIndex("IssuedBy");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("promotion", t =>
+                        {
+                            t.HasCheckConstraint("promotion_chk_1", "discount_pct > 0 AND discount_pct < 100");
+
+                            t.HasCheckConstraint("promotion_chk_2", "start_date <= end_date");
+                        });
                 });
 
             modelBuilder.Entity("BookStore.Api.Models.Publisher", b =>
@@ -712,6 +1018,11 @@ namespace BookStore.Api.Migrations
                         .HasColumnType("varchar(500)")
                         .HasColumnName("note");
 
+                    b.Property<string>("OrderFileUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)")
+                        .HasColumnName("order_file_url");
+
                     b.Property<DateTime>("OrderedAt")
                         .HasColumnType("datetime(6)")
                         .HasColumnName("ordered_at");
@@ -720,11 +1031,17 @@ namespace BookStore.Api.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("publisher_id");
 
+                    b.Property<long?>("StatusId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("status_id");
+
                     b.HasKey("PoId");
 
                     b.HasIndex("CreatedBy");
 
                     b.HasIndex("PublisherId");
+
+                    b.HasIndex("StatusId");
 
                     b.ToTable("purchase_order");
                 });
@@ -768,6 +1085,45 @@ namespace BookStore.Api.Migrations
 
                             t.HasCheckConstraint("purchase_order_line_chk_2", "unit_price >= 0");
                         });
+                });
+
+            modelBuilder.Entity("BookStore.Api.Models.PurchaseOrderStatus", b =>
+                {
+                    b.Property<long>("StatusId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("status_id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("StatusId"));
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("description");
+
+                    b.Property<string>("StatusName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("status_name");
+
+                    b.HasKey("StatusId");
+
+                    b.ToTable("purchase_order_status");
+                });
+
+            modelBuilder.Entity("BookStore.Api.Models.QuarterlyRevenueRow", b =>
+                {
+                    b.Property<int>("Quarter")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("Revenue")
+                        .HasColumnType("decimal(65,30)");
+
+                    b.Property<int>("Year")
+                        .HasColumnType("int");
+
+                    b.ToTable("QuarterlyRevenueRows");
                 });
 
             modelBuilder.Entity("BookStore.Api.Models.Rating", b =>
@@ -833,14 +1189,33 @@ namespace BookStore.Api.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("invoice_id");
 
+                    b.Property<string>("Notes")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)")
+                        .HasColumnName("notes");
+
+                    b.Property<DateTime?>("ProcessedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("processed_at");
+
+                    b.Property<long?>("ProcessedBy")
+                        .HasColumnType("bigint")
+                        .HasColumnName("processed_by");
+
                     b.Property<string>("Reason")
                         .HasMaxLength(500)
                         .HasColumnType("varchar(500)")
                         .HasColumnName("reason");
 
+                    b.Property<int>("Status")
+                        .HasColumnType("int")
+                        .HasColumnName("status");
+
                     b.HasKey("ReturnId");
 
                     b.HasIndex("InvoiceId");
+
+                    b.HasIndex("ProcessedBy");
 
                     b.ToTable("return");
                 });
@@ -1003,6 +1378,57 @@ namespace BookStore.Api.Migrations
                     b.Navigation("Publisher");
                 });
 
+            modelBuilder.Entity("BookStore.Api.Models.BookPromotion", b =>
+                {
+                    b.HasOne("BookStore.Api.Models.Book", "Book")
+                        .WithMany("BookPromotions")
+                        .HasForeignKey("Isbn")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_bookpromotion_book");
+
+                    b.HasOne("BookStore.Api.Models.Promotion", "Promotion")
+                        .WithMany("BookPromotions")
+                        .HasForeignKey("PromotionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_bookpromotion_promotion");
+
+                    b.Navigation("Book");
+
+                    b.Navigation("Promotion");
+                });
+
+            modelBuilder.Entity("BookStore.Api.Models.Cart", b =>
+                {
+                    b.HasOne("BookStore.Api.Models.Customer", "Customer")
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Customer");
+                });
+
+            modelBuilder.Entity("BookStore.Api.Models.CartItem", b =>
+                {
+                    b.HasOne("BookStore.Api.Models.Cart", "Cart")
+                        .WithMany("CartItems")
+                        .HasForeignKey("CartId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("BookStore.Api.Models.Book", "Book")
+                        .WithMany()
+                        .HasForeignKey("Isbn")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Book");
+
+                    b.Navigation("Cart");
+                });
+
             modelBuilder.Entity("BookStore.Api.Models.Customer", b =>
                 {
                     b.HasOne("BookStore.Api.Models.Account", "Account")
@@ -1034,6 +1460,27 @@ namespace BookStore.Api.Migrations
                     b.Navigation("Account");
 
                     b.Navigation("Department");
+                });
+
+            modelBuilder.Entity("BookStore.Api.Models.EmployeeArea", b =>
+                {
+                    b.HasOne("BookStore.Api.Models.Area", "Area")
+                        .WithMany("EmployeeAreas")
+                        .HasForeignKey("AreaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_employee_area_area");
+
+                    b.HasOne("BookStore.Api.Models.Employee", "Employee")
+                        .WithMany("EmployeeAreas")
+                        .HasForeignKey("EmployeeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_employee_area_employee");
+
+                    b.Navigation("Area");
+
+                    b.Navigation("Employee");
                 });
 
             modelBuilder.Entity("BookStore.Api.Models.GoodsReceipt", b =>
@@ -1128,6 +1575,39 @@ namespace BookStore.Api.Migrations
                     b.Navigation("Order");
                 });
 
+            modelBuilder.Entity("BookStore.Api.Models.PriceChange", b =>
+                {
+                    b.HasOne("BookStore.Api.Models.Employee", "Employee")
+                        .WithMany()
+                        .HasForeignKey("EmployeeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_price_change_employee");
+
+                    b.HasOne("BookStore.Api.Models.Book", "Book")
+                        .WithMany("PriceChanges")
+                        .HasForeignKey("Isbn")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_price_change_book");
+
+                    b.Navigation("Book");
+
+                    b.Navigation("Employee");
+                });
+
+            modelBuilder.Entity("BookStore.Api.Models.Promotion", b =>
+                {
+                    b.HasOne("BookStore.Api.Models.Employee", "IssuedByEmployee")
+                        .WithMany("IssuedPromotions")
+                        .HasForeignKey("IssuedBy")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_promotion_employee");
+
+                    b.Navigation("IssuedByEmployee");
+                });
+
             modelBuilder.Entity("BookStore.Api.Models.PurchaseOrder", b =>
                 {
                     b.HasOne("BookStore.Api.Models.Employee", "CreatedByEmployee")
@@ -1144,9 +1624,16 @@ namespace BookStore.Api.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_po_publisher");
 
+                    b.HasOne("BookStore.Api.Models.PurchaseOrderStatus", "Status")
+                        .WithMany("PurchaseOrders")
+                        .HasForeignKey("StatusId")
+                        .HasConstraintName("fk_purchase_order_status");
+
                     b.Navigation("CreatedByEmployee");
 
                     b.Navigation("Publisher");
+
+                    b.Navigation("Status");
                 });
 
             modelBuilder.Entity("BookStore.Api.Models.PurchaseOrderLine", b =>
@@ -1200,7 +1687,13 @@ namespace BookStore.Api.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_return_invoice");
 
+                    b.HasOne("BookStore.Api.Models.Employee", "ProcessedByEmployee")
+                        .WithMany()
+                        .HasForeignKey("ProcessedBy");
+
                     b.Navigation("Invoice");
+
+                    b.Navigation("ProcessedByEmployee");
                 });
 
             modelBuilder.Entity("BookStore.Api.Models.ReturnLine", b =>
@@ -1252,6 +1745,11 @@ namespace BookStore.Api.Migrations
                     b.Navigation("Employee");
                 });
 
+            modelBuilder.Entity("BookStore.Api.Models.Area", b =>
+                {
+                    b.Navigation("EmployeeAreas");
+                });
+
             modelBuilder.Entity("BookStore.Api.Models.Author", b =>
                 {
                     b.Navigation("AuthorBooks");
@@ -1261,11 +1759,20 @@ namespace BookStore.Api.Migrations
                 {
                     b.Navigation("AuthorBooks");
 
+                    b.Navigation("BookPromotions");
+
                     b.Navigation("OrderLines");
+
+                    b.Navigation("PriceChanges");
 
                     b.Navigation("PurchaseOrderLines");
 
                     b.Navigation("Ratings");
+                });
+
+            modelBuilder.Entity("BookStore.Api.Models.Cart", b =>
+                {
+                    b.Navigation("CartItems");
                 });
 
             modelBuilder.Entity("BookStore.Api.Models.Category", b =>
@@ -1294,6 +1801,10 @@ namespace BookStore.Api.Migrations
                     b.Navigation("CreatedPurchaseOrders");
 
                     b.Navigation("DeliveredOrders");
+
+                    b.Navigation("EmployeeAreas");
+
+                    b.Navigation("IssuedPromotions");
                 });
 
             modelBuilder.Entity("BookStore.Api.Models.GoodsReceipt", b =>
@@ -1323,6 +1834,11 @@ namespace BookStore.Api.Migrations
                     b.Navigation("RolePermissions");
                 });
 
+            modelBuilder.Entity("BookStore.Api.Models.Promotion", b =>
+                {
+                    b.Navigation("BookPromotions");
+                });
+
             modelBuilder.Entity("BookStore.Api.Models.Publisher", b =>
                 {
                     b.Navigation("Books");
@@ -1335,6 +1851,11 @@ namespace BookStore.Api.Migrations
                     b.Navigation("GoodsReceipts");
 
                     b.Navigation("PurchaseOrderLines");
+                });
+
+            modelBuilder.Entity("BookStore.Api.Models.PurchaseOrderStatus", b =>
+                {
+                    b.Navigation("PurchaseOrders");
                 });
 
             modelBuilder.Entity("BookStore.Api.Models.Return", b =>

@@ -21,8 +21,8 @@ public class Book
     public int PageCount { get; set; }
 
     [Required]
-    [Column("unit_price", TypeName = "decimal(12,2)")]
-    public decimal UnitPrice { get; set; }
+    [Column("average_price", TypeName = "decimal(12,2)")]
+    public decimal AveragePrice { get; set; }
 
     [Required]
     [Column("publish_year")]
@@ -63,4 +63,6 @@ public class Book
     public virtual ICollection<OrderLine> OrderLines { get; set; } = new List<OrderLine>();
     public virtual ICollection<Rating> Ratings { get; set; } = new List<Rating>();
     public virtual ICollection<PurchaseOrderLine> PurchaseOrderLines { get; set; } = new List<PurchaseOrderLine>();
+    public virtual ICollection<BookPromotion> BookPromotions { get; set; } = new List<BookPromotion>();
+    public virtual ICollection<PriceChange> PriceChanges { get; set; } = new List<PriceChange>();
 }

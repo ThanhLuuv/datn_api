@@ -5,8 +5,6 @@ using BookStore.Api.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using BookStore.Api.Models;
-using System.Text.RegularExpressions;
-
 namespace BookStore.Api.Controllers;
 
 [ApiController]
@@ -31,7 +29,7 @@ public class StorefrontController : ControllerBase
             .OrderByDescending(pc => pc.ChangedAt)
             .FirstOrDefaultAsync();
 
-        var basePrice = book.UnitPrice;
+        var basePrice = book.AveragePrice;
         decimal effective = latestChange != null ? latestChange.NewPrice : basePrice;
 
         return Ok(new
@@ -65,7 +63,7 @@ public class StorefrontController : ControllerBase
                 b.Isbn,
                 b.Title,
                 b.ImageUrl,
-                b.UnitPrice,
+                b.AveragePrice,
                 totalSold = g.qty
             })
             .ToListAsync();
@@ -84,7 +82,7 @@ public class StorefrontController : ControllerBase
             .Where(b => b.CreatedAt >= since)
             .OrderByDescending(b => b.CreatedAt)
             .Take(top)
-            .Select(b => new { b.Isbn, b.Title, b.ImageUrl, b.UnitPrice, b.CreatedAt })
+            .Select(b => new { b.Isbn, b.Title, b.ImageUrl, b.AveragePrice, b.CreatedAt })
             .ToListAsync();
 
         return Ok(new { success = true, data = items });
@@ -109,7 +107,7 @@ public class StorefrontController : ControllerBase
             .OrderBy(b => b.Title)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(b => new { b.Isbn, b.Title, b.ImageUrl, b.UnitPrice })
+            .Select(b => new { b.Isbn, b.Title, b.ImageUrl, b.AveragePrice })
             .ToListAsync();
 
         return Ok(new { success = true, data = items, pagination = new { page, pageSize, total } });

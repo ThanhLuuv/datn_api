@@ -140,7 +140,7 @@ public static class SeedData
                     Isbn = "978-604-1-00001-1",
                     Title = "Truyện Kiều",
                     PageCount = 300,
-                    UnitPrice = 50.000m,
+                    AveragePrice = 50.000m,
                     PublishYear = 2020,
                     CategoryId = 1,
                     PublisherId = 1,
@@ -151,7 +151,7 @@ public static class SeedData
                     Isbn = "978-604-1-00002-2",
                     Title = "Nhật ký trong tù",
                     PageCount = 200,
-                    UnitPrice = 40.000m,
+                    AveragePrice = 40.000m,
                     PublishYear = 2021,
                     CategoryId = 3,
                     PublisherId = 2,
@@ -162,7 +162,7 @@ public static class SeedData
                     Isbn = "978-604-1-00003-3",
                     Title = "Harry Potter và Hòn đá phù thủy",
                     PageCount = 350,
-                    UnitPrice = 80.000m,
+                    AveragePrice = 80.000m,
                     PublishYear = 2022,
                     CategoryId = 1,
                     PublisherId = 3,
@@ -200,6 +200,59 @@ public static class SeedData
             await context.SaveChangesAsync();
         }
 
+        // Seed Areas
+        if (!await context.Areas.AnyAsync())
+        {
+            var areas = new List<Area>
+            {
+                new Area { Name = "Quận 1", Keywords = "quan 1,Q1,quan1,district 1,700000" },
+                new Area { Name = "Quận 3", Keywords = "quan 3,Q3,quan3,district 3,700000" },
+                new Area { Name = "Quận 7", Keywords = "quan 7,Q7,quan7,district 7,700000,Phu My Hung" }
+            };
+
+            context.Areas.AddRange(areas);
+            await context.SaveChangesAsync();
+        }
+
+        // Seed Delivery Employees (with Accounts) for testing delivery suggestion
+        if (!await context.Employees.AnyAsync())
+        {
+            // Get references
+            var dept = await context.Departments.FirstAsync();
+            var areaIds = await context.Areas.OrderBy(a => a.AreaId).Select(a => a.AreaId).ToListAsync();
+
+            var accounts = new List<Account>
+            {
+                new Account { Email = "shipper1@example.com", PasswordHash = "test-hash", RoleId = 3, IsActive = true },
+                new Account { Email = "shipper2@example.com", PasswordHash = "test-hash", RoleId = 3, IsActive = true },
+                new Account { Email = "shipper3@example.com", PasswordHash = "test-hash", RoleId = 3, IsActive = true }
+            };
+            context.Accounts.AddRange(accounts);
+            await context.SaveChangesAsync();
+
+            var employees = new List<Employee>
+            {
+                new Employee { AccountId = accounts[0].AccountId, DepartmentId = dept.DepartmentId, FirstName = "Nguyen", LastName = "A", Gender = Gender.Male, Phone = "0901111111", Email = "shipper1@example.com" },
+                new Employee { AccountId = accounts[1].AccountId, DepartmentId = dept.DepartmentId, FirstName = "Tran", LastName = "B", Gender = Gender.Male, Phone = "0902222222", Email = "shipper2@example.com" },
+                new Employee { AccountId = accounts[2].AccountId, DepartmentId = dept.DepartmentId, FirstName = "Le", LastName = "C", Gender = Gender.Female, Phone = "0903333333", Email = "shipper3@example.com" }
+            };
+            context.Employees.AddRange(employees);
+            await context.SaveChangesAsync();
+
+            // Assign employees to areas using the new many-to-many relationship
+            var employeeAreas = new List<EmployeeArea>();
+            for (int i = 0; i < employees.Count && i < areaIds.Count; i++)
+            {
+                employeeAreas.Add(new EmployeeArea 
+                { 
+                    EmployeeId = employees[i].EmployeeId, 
+                    AreaId = areaIds[i] 
+                });
+            }
+            context.EmployeeAreas.AddRange(employeeAreas);
+            await context.SaveChangesAsync();
+        }
+
         // Seed Purchase Order Statuses
         if (!await context.PurchaseOrderStatuses.AnyAsync())
         {
@@ -214,6 +267,76 @@ public static class SeedData
 
             context.PurchaseOrderStatuses.AddRange(statuses);
             await context.SaveChangesAsync();
+        }
+
+        // Seed Promotions (requires at least 1 employee and some books)
+        if (!await context.Promotions.AnyAsync())
+        {
+            // Try to find an existing employee to set as issuer
+            var issuerId = await context.Employees
+                .Select(e => e.EmployeeId)
+                .FirstOrDefaultAsync();
+
+            if (issuerId != 0)
+            {
+                var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+                var promo1 = new Promotion
+                {
+                    Name = "Giảm 10% tuần lễ sách",
+                    Description = "Khuyến mãi 10% cho một số tựa sách nổi bật",
+                    DiscountPct = 10m,
+                    StartDate = today.AddDays(-3),
+                    EndDate = today.AddDays(7),
+                    IssuedBy = issuerId,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                var promo2 = new Promotion
+                {
+                    Name = "Sale cuối tháng 20%",
+                    Description = "Khuyến mãi 20% cuối tháng cho các tựa chọn lọc",
+                    DiscountPct = 20m,
+                    StartDate = new DateOnly(today.Year, today.Month, 1).AddDays(20),
+                    EndDate = new DateOnly(today.Year, today.Month, 1).AddDays(27),
+                    IssuedBy = issuerId,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                context.Promotions.AddRange(promo1, promo2);
+                await context.SaveChangesAsync();
+
+                // Link a few books to each promotion if available
+                var firstIsbns = await context.Books
+                    .OrderBy(b => b.Isbn)
+                    .Select(b => b.Isbn)
+                    .Take(2)
+                    .ToListAsync();
+
+                var nextIsbns = await context.Books
+                    .OrderByDescending(b => b.Isbn)
+                    .Select(b => b.Isbn)
+                    .Take(2)
+                    .ToListAsync();
+
+                var bookPromotions = new List<BookPromotion>();
+                foreach (var isbn in firstIsbns)
+                {
+                    bookPromotions.Add(new BookPromotion { Isbn = isbn, PromotionId = promo1.PromotionId });
+                }
+                foreach (var isbn in nextIsbns)
+                {
+                    bookPromotions.Add(new BookPromotion { Isbn = isbn, PromotionId = promo2.PromotionId });
+                }
+
+                if (bookPromotions.Count > 0)
+                {
+                    context.BookPromotions.AddRange(bookPromotions);
+                    await context.SaveChangesAsync();
+                }
+            }
+            // If there is no employee yet, skip promotion seeding silently
         }
     }
 }

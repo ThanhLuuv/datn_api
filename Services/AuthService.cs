@@ -61,6 +61,20 @@ public class AuthService : IAuthService
             _context.Accounts.Add(account);
             await _context.SaveChangesAsync();
 
+            // Auto-create Customer profile using email as name
+            var customer = new Customer
+            {
+                AccountId = account.AccountId,
+                FirstName = registerDto.Email,
+                LastName = registerDto.Email,
+                Gender = Gender.Other,
+                Email = registerDto.Email,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            _context.Customers.Add(customer);
+            await _context.SaveChangesAsync();
+
             // Load role for token generation
             await _context.Entry(account)
                 .Reference(a => a.Role)
