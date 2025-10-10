@@ -60,10 +60,14 @@ public class Employee
     [ForeignKey("DepartmentId")]
     public virtual Department Department { get; set; } = null!;
 
+    // Many-to-many relationship with Area through EmployeeArea
+    public virtual ICollection<EmployeeArea> EmployeeAreas { get; set; } = new List<EmployeeArea>();
+
     public virtual ICollection<PurchaseOrder> CreatedPurchaseOrders { get; set; } = new List<PurchaseOrder>();
     public virtual ICollection<GoodsReceipt> CreatedGoodsReceipts { get; set; } = new List<GoodsReceipt>();
     public virtual ICollection<Order> ApprovedOrders { get; set; } = new List<Order>();
     public virtual ICollection<Order> DeliveredOrders { get; set; } = new List<Order>();
+    public virtual ICollection<Promotion> IssuedPromotions { get; set; } = new List<Promotion>();
 
     // Computed property
     [NotMapped]

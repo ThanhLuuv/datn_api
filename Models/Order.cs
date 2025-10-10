@@ -38,7 +38,7 @@ public class Order
 
     [Required]
     [Column("status")]
-    public OrderStatus Status { get; set; } = OrderStatus.Pending;
+    public OrderStatus Status { get; set; } = OrderStatus.PendingPayment;
 
     [Column("approved_by")]
     public long? ApprovedBy { get; set; }
@@ -69,7 +69,9 @@ public class Order
 
 public enum OrderStatus
 {
-    Pending,    // Chưa duyệt
-    Assigned,   // Phân công
-    Delivered   // Đã giao
+    Paid = 0,           // 0 - Đã thanh toán
+    Assigned = 1,        // 1 - Đã phân công
+    Delivered = 2,       // 2 - Đã giao
+    PendingPayment = 3,  // 3 - Chờ thanh toán
+    Cancelled = 4        // 4 - Đã hủy
 }

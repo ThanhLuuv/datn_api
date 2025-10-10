@@ -7,10 +7,11 @@ public class CreatePaymentLinkRequestDto
 	[Required]
 	public long OrderId { get; set; }
 	[Required]
-	[Range(1, double.MaxValue)]
+	[Range(0.01, 999999999.99)]
 	public decimal Amount { get; set; }
 	public string Currency { get; set; } = "VND";
 	public string? ReturnUrl { get; set; }
+	public string? CancelUrl { get; set; }
 }
 
 public class CreatePaymentLinkResponseDto

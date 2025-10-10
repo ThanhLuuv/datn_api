@@ -28,6 +28,28 @@ public class ReportController : ControllerBase
 		if (result.Success) return Ok(result);
 		return BadRequest(result);
 	}
+
+    /// <summary>
+    /// Báo cáo doanh thu theo tháng trong khoảng thời gian
+    /// </summary>
+    [HttpGet("revenue-monthly")]
+    public async Task<ActionResult<ApiResponse<MonthlyRevenueReportResponse>>> GetMonthlyRevenue([FromQuery] DateTime fromDate, [FromQuery] DateTime toDate)
+    {
+        var result = await _reportService.GetMonthlyRevenueAsync(fromDate, toDate);
+        if (result.Success) return Ok(result);
+        return BadRequest(result);
+    }
+
+    /// <summary>
+    /// Báo cáo doanh thu theo quý trong khoảng thời gian
+    /// </summary>
+    [HttpGet("revenue-quarterly")]
+    public async Task<ActionResult<ApiResponse<QuarterlyRevenueReportResponse>>> GetQuarterlyRevenue([FromQuery] DateTime fromDate, [FromQuery] DateTime toDate)
+    {
+        var result = await _reportService.GetQuarterlyRevenueAsync(fromDate, toDate);
+        if (result.Success) return Ok(result);
+        return BadRequest(result);
+    }
 }
 
 

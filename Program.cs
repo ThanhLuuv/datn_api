@@ -5,8 +5,15 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Text;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Configure logging
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
+builder.Logging.SetMinimumLevel(LogLevel.Debug);
 
 // Add services to the container.
 builder.Services.AddControllers();
@@ -82,6 +89,11 @@ builder.Services.AddScoped<IGoodsReceiptService, GoodsReceiptService>();
 builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<IRoleService, RoleService>();
+builder.Services.AddScoped<IOrderService, OrderService>();
+builder.Services.AddScoped<IPromotionService, PromotionService>();
+builder.Services.AddScoped<IReturnService, ReturnService>();
+builder.Services.AddScoped<IPriceChangeService, PriceChangeService>();
+builder.Services.AddScoped<ICartService, CartService>();
 
 // Health Checks
 builder.Services.AddHealthChecks()
@@ -121,6 +133,69 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 var app = builder.Build();
+
+// Add request/response logging middleware
+app.Use(async (context, next) =>
+{
+    var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+    
+    // Log request
+    logger.LogInformation("=== REQUEST ===");
+    logger.LogInformation("Method: {Method}", context.Request.Method);
+    logger.LogInformation("Path: {Path}", context.Request.Path);
+    logger.LogInformation("QueryString: {QueryString}", context.Request.QueryString);
+    logger.LogInformation("Content-Type: {ContentType}", context.Request.ContentType);
+    logger.LogInformation("Content-Length: {ContentLength}", context.Request.ContentLength);
+    
+    // Log headers
+    foreach (var header in context.Request.Headers)
+    {
+        logger.LogInformation("Header: {Key} = {Value}", header.Key, header.Value);
+    }
+    
+    // Log form data for multipart requests
+    if (context.Request.HasFormContentType)
+    {
+        logger.LogInformation("=== FORM DATA ===");
+        foreach (var formField in context.Request.Form)
+        {
+            if (formField.Key == "imageFile")
+            {
+                var file = context.Request.Form.Files.FirstOrDefault(f => f.Name == "imageFile");
+                if (file != null)
+                {
+                    logger.LogInformation("File: {Key} = {FileName} ({Size} bytes)", 
+                        formField.Key, file.FileName, file.Length);
+                }
+            }
+            else
+            {
+                logger.LogInformation("Form: {Key} = {Value}", formField.Key, formField.Value);
+            }
+        }
+    }
+    
+    // Capture response
+    var originalBodyStream = context.Response.Body;
+    using var responseBody = new MemoryStream();
+    context.Response.Body = responseBody;
+    
+    await next();
+    
+    // Log response
+    logger.LogInformation("=== RESPONSE ===");
+    logger.LogInformation("Status Code: {StatusCode}", context.Response.StatusCode);
+    logger.LogInformation("Content-Type: {ContentType}", context.Response.ContentType);
+    
+    // Log response body
+    responseBody.Seek(0, SeekOrigin.Begin);
+    var responseText = await new StreamReader(responseBody).ReadToEndAsync();
+    logger.LogInformation("Response Body: {ResponseBody}", responseText);
+    
+    // Copy response back to original stream
+    responseBody.Seek(0, SeekOrigin.Begin);
+    await responseBody.CopyToAsync(originalBodyStream);
+});
 
 // Ensure database is created and seed data
 using (var scope = app.Services.CreateScope())

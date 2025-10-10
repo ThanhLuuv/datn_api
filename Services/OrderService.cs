@@ -1,0 +1,573 @@
+using BookStore.Api.Data;
+using BookStore.Api.DTOs;
+using BookStore.Api.Models;
+using Microsoft.EntityFrameworkCore;
+
+namespace BookStore.Api.Services;
+
+public class OrderService : IOrderService
+{
+    private readonly BookStoreDbContext _context;
+    private readonly IPaymentService _paymentService;
+
+    public OrderService(BookStoreDbContext context, IPaymentService paymentService)
+    {
+        _context = context;
+        _paymentService = paymentService;
+    }
+
+    public async Task<ApiResponse<OrderListResponse>> GetOrdersAsync(OrderSearchRequest request)
+    {
+        try
+        {
+            var query = _context.Orders
+                .Include(o => o.Customer)
+                .Include(o => o.ApprovedByEmployee)
+                .Include(o => o.DeliveredByEmployee)
+                .Include(o => o.OrderLines)
+                    .ThenInclude(ol => ol.Book)
+                .AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(request.Keyword))
+            {
+                query = query.Where(o => o.ReceiverName.Contains(request.Keyword) || o.ReceiverPhone.Contains(request.Keyword));
+            }
+            if (request.CustomerId.HasValue)
+            {
+                query = query.Where(o => o.CustomerId == request.CustomerId);
+            }
+            if (!string.IsNullOrWhiteSpace(request.Status))
+            {
+                if (Enum.TryParse<OrderStatus>(request.Status, true, out var st))
+                {
+                    query = query.Where(o => o.Status == st);
+                }
+            }
+            if (request.FromDate.HasValue)
+            {
+                query = query.Where(o => o.PlacedAt >= request.FromDate.Value);
+            }
+            if (request.ToDate.HasValue)
+            {
+                query = query.Where(o => o.PlacedAt <= request.ToDate.Value);
+            }
+
+            var totalCount = await query.CountAsync();
+            var totalPages = (int)Math.Ceiling((double)totalCount / request.PageSize);
+
+            var orders = await query
+                .OrderByDescending(o => o.PlacedAt)
+                .Skip((request.PageNumber - 1) * request.PageSize)
+                .Take(request.PageSize)
+                .Select(o => new OrderDto
+                {
+                    OrderId = o.OrderId,
+                    CustomerId = o.CustomerId,
+                    CustomerName = o.Customer.FirstName + " " + o.Customer.LastName,
+                    PlacedAt = o.PlacedAt,
+                    ReceiverName = o.ReceiverName,
+                    ReceiverPhone = o.ReceiverPhone,
+                    ShippingAddress = o.ShippingAddress,
+                    DeliveryDate = o.DeliveryDate,
+                    Status = o.Status.ToString(),
+                    ApprovedBy = o.ApprovedBy,
+                    ApprovedByName = o.ApprovedByEmployee != null ? o.ApprovedByEmployee.FirstName + " " + o.ApprovedByEmployee.LastName : null,
+                    DeliveredBy = o.DeliveredBy,
+                    DeliveredByName = o.DeliveredByEmployee != null ? o.DeliveredByEmployee.FirstName + " " + o.DeliveredByEmployee.LastName : null,
+                    TotalAmount = o.OrderLines.Sum(l => l.Qty * l.UnitPrice),
+                    TotalQuantity = o.OrderLines.Sum(l => l.Qty),
+                    Lines = o.OrderLines.Select(l => new OrderLineDto
+                    {
+                        OrderLineId = l.OrderLineId,
+                        Isbn = l.Isbn,
+                        BookTitle = l.Book.Title,
+                        Qty = l.Qty,
+                        UnitPrice = l.UnitPrice,
+                        LineTotal = l.Qty * l.UnitPrice
+                    }).ToList(),
+                    Invoice = o.Invoices
+                        .OrderByDescending(i => i.CreatedAt)
+                        .Select(i => new OrderInvoiceDto
+                        {
+                            InvoiceId = i.InvoiceId,
+                            CreatedAt = i.CreatedAt,
+                            TotalAmount = i.TotalAmount,
+                            TaxAmount = i.TaxAmount
+                        })
+                        .FirstOrDefault()
+                })
+                .ToListAsync();
+
+            var response = new OrderListResponse
+            {
+                Orders = orders,
+                TotalCount = totalCount,
+                PageNumber = request.PageNumber,
+                PageSize = request.PageSize,
+                TotalPages = totalPages
+            };
+
+            return new ApiResponse<OrderListResponse> { Success = true, Message = "Lấy danh sách đơn hàng thành công", Data = response };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<OrderListResponse> { Success = false, Message = "Lỗi khi lấy danh sách đơn hàng", Errors = new List<string> { ex.Message } };
+        }
+    }
+
+    public async Task<ApiResponse<OrderDto>> GetOrderByIdAsync(long orderId)
+    {
+        try
+        {
+            var order = await _context.Orders
+                .Include(o => o.Customer)
+                .Include(o => o.ApprovedByEmployee)
+                .Include(o => o.DeliveredByEmployee)
+                .Include(o => o.OrderLines).ThenInclude(ol => ol.Book)
+                .Include(o => o.Invoices)
+                .Where(o => o.OrderId == orderId)
+                .Select(o => new OrderDto
+                {
+                    OrderId = o.OrderId,
+                    CustomerId = o.CustomerId,
+                    CustomerName = o.Customer.FirstName + " " + o.Customer.LastName,
+                    PlacedAt = o.PlacedAt,
+                    ReceiverName = o.ReceiverName,
+                    ReceiverPhone = o.ReceiverPhone,
+                    ShippingAddress = o.ShippingAddress,
+                    DeliveryDate = o.DeliveryDate,
+                    Status = o.Status.ToString(),
+                    ApprovedBy = o.ApprovedBy,
+                    ApprovedByName = o.ApprovedByEmployee != null ? o.ApprovedByEmployee.FirstName + " " + o.ApprovedByEmployee.LastName : null,
+                    DeliveredBy = o.DeliveredBy,
+                    DeliveredByName = o.DeliveredByEmployee != null ? o.DeliveredByEmployee.FirstName + " " + o.DeliveredByEmployee.LastName : null,
+                    TotalAmount = o.OrderLines.Sum(l => l.Qty * l.UnitPrice),
+                    TotalQuantity = o.OrderLines.Sum(l => l.Qty),
+                    Lines = o.OrderLines.Select(l => new OrderLineDto
+                    {
+                        OrderLineId = l.OrderLineId,
+                        Isbn = l.Isbn,
+                        BookTitle = l.Book.Title,
+                        Qty = l.Qty,
+                        UnitPrice = l.UnitPrice,
+                        LineTotal = l.Qty * l.UnitPrice
+                    }).ToList(),
+                    Invoice = o.Invoices
+                        .OrderByDescending(i => i.CreatedAt)
+                        .Select(i => new OrderInvoiceDto
+                        {
+                            InvoiceId = i.InvoiceId,
+                            CreatedAt = i.CreatedAt,
+                            TotalAmount = i.TotalAmount,
+                            TaxAmount = i.TaxAmount
+                        })
+                        .FirstOrDefault()
+                })
+                .FirstOrDefaultAsync();
+
+            if (order == null)
+            {
+                return new ApiResponse<OrderDto> { Success = false, Message = "Không tìm thấy đơn hàng" };
+            }
+
+            return new ApiResponse<OrderDto> { Success = true, Message = "Lấy đơn hàng thành công", Data = order };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<OrderDto> { Success = false, Message = "Lỗi khi lấy đơn hàng", Errors = new List<string> { ex.Message } };
+        }
+    }
+
+    public async Task<ApiResponse<OrderDto>> ApproveOrderAsync(long orderId, ApproveOrderRequest request, string approverEmail)
+    {
+        try
+        {
+            var order = await _context.Orders.FirstOrDefaultAsync(o => o.OrderId == orderId);
+            if (order == null)
+            {
+                return new ApiResponse<OrderDto> { Success = false, Message = "Không tìm thấy đơn hàng" };
+            }
+
+            var approver = await _context.Employees.Include(e => e.Account).FirstOrDefaultAsync(e => e.Account.Email == approverEmail);
+            if (approver == null)
+            {
+                return new ApiResponse<OrderDto> { Success = false, Message = "Không tìm thấy thông tin nhân viên duyệt" };
+            }
+
+            if (order.Status != OrderStatus.Paid)
+            {
+                return new ApiResponse<OrderDto> { Success = false, Message = "Đơn hàng chưa thanh toán, không thể duyệt" };
+            }
+
+            if (request.Approved)
+            {
+                order.Status = OrderStatus.Assigned; // Sau duyệt chuyển sẵn sang trạng thái cần phân công
+                order.ApprovedBy = approver.EmployeeId;
+            }
+            else
+            {
+                // Nếu huỷ duyệt: có thể dùng một trạng thái khác, tạm thời giữ Pending và không tiếp tục
+                return new ApiResponse<OrderDto> { Success = true, Message = "Đã đánh dấu không duyệt đơn" };
+            }
+
+            await _context.SaveChangesAsync();
+
+            return await GetOrderByIdAsync(orderId);
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<OrderDto> { Success = false, Message = "Lỗi khi duyệt đơn", Errors = new List<string> { ex.Message } };
+        }
+    }
+
+    public async Task<ApiResponse<OrderDto>> AssignDeliveryAsync(long orderId, AssignDeliveryRequest request, string assignerEmail)
+    {
+        try
+        {
+            var order = await _context.Orders.FirstOrDefaultAsync(o => o.OrderId == orderId);
+            if (order == null)
+            {
+                return new ApiResponse<OrderDto> { Success = false, Message = "Không tìm thấy đơn hàng" };
+            }
+
+            if (order.Status != OrderStatus.Assigned && order.Status != OrderStatus.Paid)
+            {
+                return new ApiResponse<OrderDto> { Success = false, Message = "Đơn hàng không ở trạng thái có thể phân công" };
+            }
+
+            var deliveryEmp = await _context.Employees.FirstOrDefaultAsync(e => e.EmployeeId == request.DeliveryEmployeeId);
+            if (deliveryEmp == null)
+            {
+                return new ApiResponse<OrderDto> { Success = false, Message = "Nhân viên giao hàng không tồn tại" };
+            }
+
+            order.DeliveredBy = request.DeliveryEmployeeId;
+            order.DeliveryDate = request.DeliveryDate;
+            order.Status = OrderStatus.Assigned;
+
+            await _context.SaveChangesAsync();
+
+            return await GetOrderByIdAsync(orderId);
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<OrderDto> { Success = false, Message = "Lỗi khi phân công giao hàng", Errors = new List<string> { ex.Message } };
+        }
+    }
+
+    public async Task<ApiResponse<OrderDto>> ConfirmDeliveredAsync(long orderId, ConfirmDeliveredRequest request, string confirmerEmail)
+    {
+        try
+        {
+            var order = await _context.Orders.FirstOrDefaultAsync(o => o.OrderId == orderId);
+            if (order == null)
+            {
+                return new ApiResponse<OrderDto> { Success = false, Message = "Không tìm thấy đơn hàng" };
+            }
+
+            if (order.Status != OrderStatus.Assigned)
+            {
+                return new ApiResponse<OrderDto> { Success = false, Message = "Đơn hàng không ở trạng thái đang giao" };
+            }
+
+            if (!request.Success)
+            {
+                return new ApiResponse<OrderDto> { Success = false, Message = "Xác nhận giao hàng thất bại" };
+            }
+
+            order.Status = OrderStatus.Delivered;
+            await _context.SaveChangesAsync();
+
+            return await GetOrderByIdAsync(orderId);
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<OrderDto> { Success = false, Message = "Lỗi khi xác nhận giao hàng", Errors = new List<string> { ex.Message } };
+        }
+    }
+
+    public async Task<ApiResponse<List<SuggestedEmployeeDto>>> GetDeliveryCandidatesAsync(long orderId)
+    {
+        try
+        {
+            var order = await _context.Orders.FirstOrDefaultAsync(o => o.OrderId == orderId);
+            if (order == null)
+            {
+                return new ApiResponse<List<SuggestedEmployeeDto>> { Success = false, Message = "Không tìm thấy đơn hàng" };
+            }
+
+            // Chỉ lấy nhân viên có role là 4 (DELIVERY_EMPLOYEE)
+            var employees = await _context.Employees
+                .Include(e => e.EmployeeAreas)
+                    .ThenInclude(ea => ea.Area)
+                .Include(e => e.Account)
+                    .ThenInclude(a => a.Role)
+                .Where(e => e.Account.RoleId == 4) // Role 4 = DELIVERY_EMPLOYEE
+                .ToListAsync();
+
+            // Debug: Nếu không có nhân viên role 4, lấy tất cả nhân viên để test
+            if (!employees.Any())
+            {
+                employees = await _context.Employees
+                    .Include(e => e.EmployeeAreas)
+                        .ThenInclude(ea => ea.Area)
+                    .Include(e => e.Account)
+                        .ThenInclude(a => a.Role)
+                    .ToListAsync();
+            }
+
+            // Simple area matching by keyword contains in shipping address
+            string addr = order.ShippingAddress.ToLowerInvariant();
+            Func<string?, bool> match = k => !string.IsNullOrWhiteSpace(k) && addr.Contains(k.Trim().ToLowerInvariant());
+
+            // Đếm đơn hàng đã phân công (status = 1) cho mỗi nhân viên
+            var activeAssignedByEmp = await _context.Orders
+                .Where(o => o.Status == OrderStatus.Assigned && o.DeliveredBy != null)
+                .GroupBy(o => o.DeliveredBy!.Value)
+                .Select(g => new { EmployeeId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.EmployeeId, x => x.Count);
+
+            // Đếm tổng đơn hàng đã giao (status = 2) cho mỗi nhân viên
+            var totalDeliveredByEmp = await _context.Orders
+                .Where(o => o.Status == OrderStatus.Delivered && o.DeliveredBy != null)
+                .GroupBy(o => o.DeliveredBy!.Value)
+                .Select(g => new { EmployeeId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.EmployeeId, x => x.Count);
+
+            var suggestions = new List<SuggestedEmployeeDto>();
+            foreach (var e in employees)
+            {
+                bool isAreaMatched = false;
+                var activeAreas = e.EmployeeAreas.Where(ea => ea.IsActive).Select(ea => ea.Area);
+                foreach (var area in activeAreas)
+                {
+                    var kws = (area.Keywords ?? area.Name).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (kws.Any(k => match(k)))
+                    {
+                        isAreaMatched = true;
+                        break;
+                    }
+                }
+
+                var activeAssigned = activeAssignedByEmp.TryGetValue(e.EmployeeId, out var a) ? a : 0;
+                var delivered = totalDeliveredByEmp.TryGetValue(e.EmployeeId, out var d) ? d : 0;
+
+                var areaNames = string.Join(", ", activeAreas.Select(a => a.Name));
+                suggestions.Add(new SuggestedEmployeeDto
+                {
+                    EmployeeId = e.EmployeeId,
+                    FullName = e.FullName,
+                    Phone = e.Phone,
+                    Email = e.Email,
+                    AreaName = areaNames,
+                    IsAreaMatched = isAreaMatched,
+                    ActiveAssignedOrders = activeAssigned,
+                    TotalDeliveredOrders = delivered
+                });
+            }
+
+            var ordered = suggestions
+                .OrderByDescending(s => s.IsAreaMatched)
+                .ThenBy(s => s.ActiveAssignedOrders)
+                .ThenByDescending(s => s.TotalDeliveredOrders)
+                .ThenBy(s => s.EmployeeId)
+                .ToList();
+            return new ApiResponse<List<SuggestedEmployeeDto>> { Success = true, Message = "Gợi ý nhân viên giao hàng thành công", Data = ordered };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<List<SuggestedEmployeeDto>> { Success = false, Message = "Lỗi khi gợi ý nhân viên giao hàng", Errors = new List<string> { ex.Message } };
+        }
+    }
+    private static System.Linq.Expressions.Expression<Func<Order, OrderDto>> MapToOrderDtoSelector()
+        => o => new OrderDto
+        {
+            OrderId = o.OrderId,
+            CustomerId = o.CustomerId,
+            CustomerName = o.Customer.FirstName + " " + o.Customer.LastName,
+            PlacedAt = o.PlacedAt,
+            ReceiverName = o.ReceiverName,
+            ReceiverPhone = o.ReceiverPhone,
+            ShippingAddress = o.ShippingAddress,
+            DeliveryDate = o.DeliveryDate,
+            Status = o.Status.ToString(),
+            ApprovedBy = o.ApprovedBy,
+            ApprovedByName = o.ApprovedByEmployee != null ? o.ApprovedByEmployee.FirstName + " " + o.ApprovedByEmployee.LastName : null,
+            DeliveredBy = o.DeliveredBy,
+            DeliveredByName = o.DeliveredByEmployee != null ? o.DeliveredByEmployee.FirstName + " " + o.DeliveredByEmployee.LastName : null,
+            TotalAmount = o.OrderLines.Sum(l => l.Qty * l.UnitPrice),
+            TotalQuantity = o.OrderLines.Sum(l => l.Qty),
+            Lines = o.OrderLines.Select(l => new OrderLineDto
+            {
+                OrderLineId = l.OrderLineId,
+                Isbn = l.Isbn,
+                BookTitle = l.Book.Title,
+                Qty = l.Qty,
+                UnitPrice = l.UnitPrice,
+                LineTotal = l.Qty * l.UnitPrice
+            }).ToList()
+        };
+
+    public async Task<ApiResponse<OrderDto>> CreateOrderAsync(CreateOrderDto createOrderDto, long customerId)
+    {
+        try
+        {
+            // Validate customer exists by account_id
+            var customer = await _context.Customers
+                .FirstOrDefaultAsync(c => c.AccountId == customerId);
+            if (customer == null)
+            {
+                return new ApiResponse<OrderDto>
+                {
+                    Success = false,
+                    Message = "Customer not found",
+                    Errors = new List<string> { "Customer does not exist" }
+                };
+            }
+
+            // Validate books exist and get current prices
+            var isbns = createOrderDto.Lines.Select(l => l.Isbn).Distinct().ToList();
+            var books = await _context.Books
+                .Where(b => isbns.Contains(b.Isbn))
+                .ToListAsync();
+
+            var missingIsbns = isbns.Except(books.Select(b => b.Isbn)).ToList();
+            if (missingIsbns.Any())
+            {
+                return new ApiResponse<OrderDto>
+                {
+                    Success = false,
+                    Message = "Books not found",
+                    Errors = new List<string> { $"Books with ISBN {string.Join(", ", missingIsbns)} do not exist" }
+                };
+            }
+
+            // Get current prices for all books
+            var bookPrices = new Dictionary<string, decimal>();
+            foreach (var book in books)
+            {
+                var currentPrice = await GetCurrentPriceAsync(book.Isbn);
+                bookPrices[book.Isbn] = currentPrice;
+            }
+
+            // Create order
+            var order = new Order
+            {
+                CustomerId = customer.CustomerId, // Use actual customer_id, not account_id
+                PlacedAt = DateTime.UtcNow,
+                ReceiverName = createOrderDto.ReceiverName,
+                ReceiverPhone = createOrderDto.ReceiverPhone,
+                ShippingAddress = createOrderDto.ShippingAddress,
+                Status = OrderStatus.PendingPayment // 3 - Chờ thanh toán
+            };
+
+            _context.Orders.Add(order);
+            await _context.SaveChangesAsync();
+
+            // Create order lines with current prices
+            foreach (var lineDto in createOrderDto.Lines)
+            {
+                var currentPrice = bookPrices[lineDto.Isbn];
+                var orderLine = new OrderLine
+                {
+                    OrderId = order.OrderId,
+                    Isbn = lineDto.Isbn,
+                    Qty = lineDto.Qty,
+                    UnitPrice = currentPrice // Use current price at order time
+                };
+
+                _context.OrderLines.Add(orderLine);
+            }
+
+            await _context.SaveChangesAsync();
+
+            // Calculate total amount
+            var totalAmount = createOrderDto.Lines.Sum(line => 
+                bookPrices[line.Isbn] * line.Qty);
+
+            // Create payment link in same transaction
+            var paymentRequest = new CreatePaymentLinkRequestDto
+            {
+                OrderId = order.OrderId,
+                Amount = totalAmount,
+                Currency = "VND",
+                ReturnUrl = "http://127.0.0.1:3000/#!/payment/success",
+                CancelUrl = "http://127.0.0.1:3000/#!/payment/cancel"
+            };
+
+            var paymentResult = await _paymentService.CreatePaymentLinkAsync(paymentRequest);
+            if (!paymentResult.Success)
+            {
+                // Rollback: delete payment transaction first, then order
+                var paymentTxn = await _context.PaymentTransactions
+                    .FirstOrDefaultAsync(pt => pt.OrderId == order.OrderId);
+                if (paymentTxn != null)
+                {
+                    _context.PaymentTransactions.Remove(paymentTxn);
+                }
+                
+                // Delete order lines first
+                var orderLines = await _context.OrderLines
+                    .Where(ol => ol.OrderId == order.OrderId)
+                    .ToListAsync();
+                _context.OrderLines.RemoveRange(orderLines);
+                
+                // Then delete order
+                _context.Orders.Remove(order);
+                await _context.SaveChangesAsync();
+                
+                return new ApiResponse<OrderDto>
+                {
+                    Success = false,
+                    Message = "Failed to create payment link",
+                    Errors = paymentResult.Errors
+                };
+            }
+
+            // Return the created order with payment info
+            var orderResult = await GetOrderByIdAsync(order.OrderId);
+            if (orderResult.Success && orderResult.Data != null)
+            {
+                orderResult.Data.PaymentUrl = paymentResult.Data?.CheckoutUrl;
+            }
+            
+            return orderResult;
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<OrderDto>
+            {
+                Success = false,
+                Message = "Error creating order",
+                Errors = new List<string> { ex.Message }
+            };
+        }
+    }
+
+    private async Task<decimal> GetCurrentPriceAsync(string isbn)
+    {
+        var currentPriceChange = await _context.PriceChanges
+            .Where(pc => pc.Isbn == isbn && pc.ChangedAt <= DateTime.UtcNow)
+            .OrderByDescending(pc => pc.ChangedAt)
+            .FirstOrDefaultAsync();
+
+        if (currentPriceChange != null)
+        {
+            return currentPriceChange.NewPrice;
+        }
+
+        // Fallback to average price from book table
+        var book = await _context.Books
+            .Where(b => b.Isbn == isbn)
+            .Select(b => b.AveragePrice)
+            .FirstOrDefaultAsync();
+
+        return book;
+    }
+
+    public async Task<Customer?> GetCustomerByAccountIdAsync(long accountId)
+    {
+        return await _context.Customers
+            .FirstOrDefaultAsync(c => c.AccountId == accountId);
+    }
+}

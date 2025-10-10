@@ -25,6 +25,7 @@ public class CategoryController : ControllerBase
     /// <param name="searchTerm">Từ khóa tìm kiếm</param>
     /// <returns>Danh sách danh mục</returns>
     [HttpGet]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<CategoryListResponse>>> GetCategories(
         [FromQuery] int pageNumber = 1,
         [FromQuery] int pageSize = 10,
@@ -49,6 +50,7 @@ public class CategoryController : ControllerBase
     /// <param name="categoryId">ID danh mục</param>
     /// <returns>Thông tin danh mục</returns>
     [HttpGet("{categoryId}")]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<CategoryDto>>> GetCategory(long categoryId)
     {
         var result = await _categoryService.GetCategoryByIdAsync(categoryId);

@@ -38,10 +38,39 @@ public class PaymentService : IPaymentService
 		var checksumKey = _config["PayOS:ChecksumKey"] ?? "";
 
 		var orderCode = txn.TransactionId; // unique
-		var amount = (long)decimal.Round(request.Amount, 0, MidpointRounding.AwayFromZero);
-		var description = $"Thanh toan don hang #{request.OrderId}";
+		var amount = (long)Math.Round(request.Amount, 0, MidpointRounding.AwayFromZero);
+		var description = $"DH#{request.OrderId}";
 		var returnUrl = request.ReturnUrl ?? _config["PayOS:ReturnUrl"] ?? "";
-		var cancelUrl = _config["PayOS:CancelUrl"] ?? returnUrl;
+		var cancelUrl = request.CancelUrl ?? _config["PayOS:CancelUrl"] ?? returnUrl;
+		
+		// Validate required fields
+		if (orderCode <= 0)
+		{
+			return new ApiResponse<CreatePaymentLinkResponseDto>
+			{
+				Success = false,
+				Message = "Order code phải là số nguyên dương",
+				Errors = new List<string> { "Invalid orderCode" }
+			};
+		}
+		
+		if (amount <= 0)
+		{
+			return new ApiResponse<CreatePaymentLinkResponseDto>
+			{
+				Success = false,
+				Message = "Amount phải lớn hơn 0",
+				Errors = new List<string> { "Invalid amount" }
+			};
+		}
+		
+		if (string.IsNullOrWhiteSpace(description))
+		{
+			description = $"Order #{request.OrderId}";
+		}
+
+		// Compute HMAC-SHA256 signature
+		var signature = ComputeSignature(amount, cancelUrl, description, orderCode, returnUrl, checksumKey);
 
 		var payload = new
 		{
@@ -49,12 +78,18 @@ public class PaymentService : IPaymentService
 			amount,
 			description,
 			returnUrl,
-			cancelUrl
+			cancelUrl,
+			signature
 		};
 
 		var bodyJson = System.Text.Json.JsonSerializer.Serialize(payload);
 		txn.RawRequest = bodyJson;
 		await _context.SaveChangesAsync();
+
+		// Log request for debugging
+		Console.WriteLine($"PayOS Request: {bodyJson}");
+		Console.WriteLine($"ClientId: {clientId}");
+		Console.WriteLine($"ApiKey: {apiKey?.Substring(0, Math.Min(10, apiKey.Length))}...");
 
 		using var http = new HttpClient();
 		http.DefaultRequestHeaders.Add("x-client-id", clientId);
@@ -64,56 +99,164 @@ public class PaymentService : IPaymentService
 		var resp = await http.PostAsync("https://api-merchant.payos.vn/v2/payment-requests", content);
 		var respText = await resp.Content.ReadAsStringAsync();
 		txn.RawResponse = respText;
+		await _context.SaveChangesAsync();
+		
 		if (!resp.IsSuccessStatusCode)
 		{
-			await _context.SaveChangesAsync();
 			return new ApiResponse<CreatePaymentLinkResponseDto>
 			{
 				Success = false,
 				Message = "Tạo liên kết thanh toán thất bại",
-				Errors = new List<string> { respText }
+				Errors = new List<string> { $"HTTP {resp.StatusCode}: {respText}" }
 			};
 		}
 
-		using var doc = System.Text.Json.JsonDocument.Parse(respText);
-		var root = doc.RootElement;
-		var data = root.GetProperty("data");
-		var checkoutUrl = data.GetProperty("checkoutUrl").GetString() ?? string.Empty;
-		var providerTxnId = data.GetProperty("id").GetString() ?? string.Empty;
-		txn.CheckoutUrl = checkoutUrl;
-		txn.ProviderTxnId = providerTxnId;
-		await _context.SaveChangesAsync();
-
-		return new ApiResponse<CreatePaymentLinkResponseDto>
+		try
 		{
-			Success = true,
-			Message = "Tạo liên kết thanh toán thành công",
-			Data = new CreatePaymentLinkResponseDto
+			using var doc = System.Text.Json.JsonDocument.Parse(respText);
+			var root = doc.RootElement;
+			
+			// Đọc code và desc trước
+			var code = root.TryGetProperty("code", out var codeEl) ? codeEl.GetString() : null;
+			var desc = root.TryGetProperty("desc", out var descEl) ? descEl.GetString() : null;
+			
+			// Chỉ tiếp tục nếu code == "00" (success) và data là Object
+			if (code == "00" && root.TryGetProperty("data", out var dataEl) && dataEl.ValueKind == System.Text.Json.JsonValueKind.Object)
 			{
-				TransactionId = txn.TransactionId,
-				CheckoutUrl = checkoutUrl,
-				ProviderTxnId = providerTxnId
+				var checkoutUrl = dataEl.TryGetProperty("checkoutUrl", out var checkoutUrlProp) 
+					? checkoutUrlProp.GetString() ?? string.Empty 
+					: string.Empty;
+				var providerTxnId = dataEl.TryGetProperty("paymentLinkId", out var idProp)
+					? idProp.GetString() ?? string.Empty 
+					: (dataEl.TryGetProperty("id", out var id2) ? id2.GetString() ?? string.Empty : string.Empty);
+				
+				txn.CheckoutUrl = checkoutUrl;
+				txn.ProviderTxnId = providerTxnId;
+				txn.Status = "PENDING";
+				await _context.SaveChangesAsync();
+
+				return new ApiResponse<CreatePaymentLinkResponseDto>
+				{
+					Success = true,
+					Message = "Tạo liên kết thanh toán thành công",
+					Data = new CreatePaymentLinkResponseDto
+					{
+						TransactionId = txn.TransactionId,
+						CheckoutUrl = checkoutUrl,
+						ProviderTxnId = providerTxnId
+					}
+				};
 			}
-		};
+			
+			// Nếu không thành công, trả lỗi rõ ràng
+			return new ApiResponse<CreatePaymentLinkResponseDto>
+			{
+				Success = false,
+				Message = "Failed to create payment link",
+				Errors = new List<string> { $"code={code}, desc={desc}", respText }
+			};
+		}
+		catch (Exception ex)
+		{
+			return new ApiResponse<CreatePaymentLinkResponseDto>
+			{
+				Success = false,
+				Message = "Lỗi parse PayOS response",
+				Errors = new List<string> { ex.Message, respText }
+			};
+		}
+	}
+
+	private static string ComputeSignature(long amount, string cancelUrl, string description, long orderCode, string returnUrl, string checksumKey)
+	{
+		// Build signing string theo thứ tự alpha
+		var signing = $"amount={amount}&cancelUrl={cancelUrl}&description={description}&orderCode={orderCode}&returnUrl={returnUrl}";
+		using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(checksumKey));
+		var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(signing));
+		return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant(); // hex lowercase
 	}
 
 	public async Task HandleWebhookAsync(string payload, string signature)
 	{
-		// Optionally validate signature with checksum key if PayOS provides
-		// Parse and update transaction status
-		using var doc = System.Text.Json.JsonDocument.Parse(payload);
-		var root = doc.RootElement;
-		var data = root.TryGetProperty("data", out var d) ? d : root;
-		var orderCode = data.GetProperty("orderCode").GetInt64();
-		var status = data.GetProperty("status").GetString() ?? ""; // e.g., PAID
-
-		var txn = await _context.PaymentTransactions.FirstOrDefaultAsync(t => t.TransactionId == orderCode);
-		if (txn != null)
+		try
 		{
-			txn.Status = status.ToUpperInvariant();
-			txn.RawResponse = payload;
-			txn.UpdatedAt = DateTime.UtcNow;
-			await _context.SaveChangesAsync();
+			// Log webhook payload for debugging
+			Console.WriteLine($"Webhook received: {payload}");
+			
+			using var doc = System.Text.Json.JsonDocument.Parse(payload);
+			var root = doc.RootElement;
+			
+			// Parse webhook data safely
+			var data = root.TryGetProperty("data", out var d) ? d : root;
+			
+			if (!data.TryGetProperty("orderCode", out var orderCodeEl))
+			{
+				Console.WriteLine("Webhook missing required field: orderCode");
+				return;
+			}
+			
+			var orderCode = orderCodeEl.GetInt64();
+			
+			// Determine status from PayOS response
+			var code = root.TryGetProperty("code", out var codeEl) ? codeEl.GetString() : "";
+			var desc = root.TryGetProperty("desc", out var descEl) ? descEl.GetString() : "";
+			
+			// Map PayOS code to our status
+			var status = code == "00" ? "PAID" : "FAILED";
+			
+			Console.WriteLine($"Processing webhook: orderCode={orderCode}, code={code}, desc={desc}, status={status}");
+
+			var txn = await _context.PaymentTransactions.FirstOrDefaultAsync(t => t.TransactionId == orderCode);
+			if (txn != null)
+			{
+				txn.Status = status.ToUpperInvariant();
+				txn.RawResponse = payload;
+				txn.UpdatedAt = DateTime.UtcNow;
+				
+				// If payment successful, update order status to Paid and reduce stock
+				if (status.ToUpperInvariant() == "PAID")
+				{
+					var order = await _context.Orders
+						.Include(o => o.OrderLines)
+						.FirstOrDefaultAsync(o => o.OrderId == txn.OrderId);
+					if (order != null)
+					{
+						order.Status = OrderStatus.Paid; // 0 - Đã thanh toán
+						
+						// Reduce stock for each book in the order
+						foreach (var orderLine in order.OrderLines)
+						{
+							var book = await _context.Books.FirstOrDefaultAsync(b => b.Isbn == orderLine.Isbn);
+							if (book != null)
+							{
+								// Check if enough stock
+								if (book.Stock >= orderLine.Qty)
+								{
+									book.Stock -= orderLine.Qty;
+									Console.WriteLine($"Reduced stock for {orderLine.Isbn}: {book.Stock + orderLine.Qty} -> {book.Stock}");
+								}
+								else
+								{
+									Console.WriteLine($"Insufficient stock for {orderLine.Isbn}: requested {orderLine.Qty}, available {book.Stock}");
+									// Could add error handling here if needed
+								}
+							}
+						}
+					}
+				}
+				
+				await _context.SaveChangesAsync();
+				Console.WriteLine($"Updated transaction {orderCode} to status {status}");
+			}
+			else
+			{
+				Console.WriteLine($"Transaction {orderCode} not found");
+			}
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"Webhook error: {ex.Message}");
+			Console.WriteLine($"Payload: {payload}");
 		}
 	}
 }

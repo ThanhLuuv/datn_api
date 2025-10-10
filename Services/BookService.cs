@@ -2,16 +2,43 @@ using BookStore.Api.Data;
 using BookStore.Api.DTOs;
 using BookStore.Api.Models;
 using Microsoft.EntityFrameworkCore;
+using CloudinaryDotNet;
+using CloudinaryDotNet.Actions;
 
 namespace BookStore.Api.Services;
 
 public class BookService : IBookService
 {
     private readonly BookStoreDbContext _context;
+    private readonly IConfiguration _configuration;
 
-    public BookService(BookStoreDbContext context)
+    public BookService(BookStoreDbContext context, IConfiguration configuration)
     {
         _context = context;
+        _configuration = configuration;
+    }
+
+    private async Task<decimal> GetCurrentPriceAsync(string isbn, DateTime? asOfDate = null)
+    {
+        var effectiveDate = asOfDate ?? DateTime.UtcNow;
+        
+            var currentPriceChange = await _context.PriceChanges
+            .Where(pc => pc.Isbn == isbn && pc.ChangedAt <= effectiveDate)
+            .OrderByDescending(pc => pc.ChangedAt)
+            .FirstOrDefaultAsync();
+
+        if (currentPriceChange != null)
+        {
+            return currentPriceChange.NewPrice;
+        }
+
+        // Fallback to average price from book table
+        var book = await _context.Books
+            .Where(b => b.Isbn == isbn)
+            .Select(b => b.AveragePrice)
+            .FirstOrDefaultAsync();
+
+        return book;
     }
 
     public async Task<ApiResponse<BookListResponse>> GetBooksAsync(BookSearchRequest searchRequest)
@@ -42,14 +69,168 @@ public class BookService : IBookService
                 query = query.Where(b => b.PublisherId == searchRequest.PublisherId.Value);
             }
 
-            if (searchRequest.MinPrice.HasValue)
+            // Note: Price filtering will be done after getting current prices
+            // since current price comes from PriceChange table
+
+            if (searchRequest.MinYear.HasValue)
             {
-                query = query.Where(b => b.UnitPrice >= searchRequest.MinPrice.Value);
+                query = query.Where(b => b.PublishYear >= searchRequest.MinYear.Value);
             }
 
-            if (searchRequest.MaxPrice.HasValue)
+            if (searchRequest.MaxYear.HasValue)
             {
-                query = query.Where(b => b.UnitPrice <= searchRequest.MaxPrice.Value);
+                query = query.Where(b => b.PublishYear <= searchRequest.MaxYear.Value);
+            }
+
+            // Apply sorting
+            query = searchRequest.SortBy?.ToLower() switch
+            {
+                "title" => searchRequest.SortDirection?.ToLower() == "desc" 
+                    ? query.OrderByDescending(b => b.Title) 
+                    : query.OrderBy(b => b.Title),
+                "price" => searchRequest.SortDirection?.ToLower() == "desc" 
+                    ? query.OrderByDescending(b => b.AveragePrice) 
+                    : query.OrderBy(b => b.AveragePrice),
+                "year" => searchRequest.SortDirection?.ToLower() == "desc" 
+                    ? query.OrderByDescending(b => b.PublishYear) 
+                    : query.OrderBy(b => b.PublishYear),
+                "created" => searchRequest.SortDirection?.ToLower() == "desc" 
+                    ? query.OrderByDescending(b => b.CreatedAt) 
+                    : query.OrderBy(b => b.CreatedAt),
+                _ => query.OrderBy(b => b.Title)
+            };
+
+            var totalCount = await query.CountAsync();
+            var totalPages = (int)Math.Ceiling((double)totalCount / searchRequest.PageSize);
+
+            var booksData = await query
+                .Skip((searchRequest.PageNumber - 1) * searchRequest.PageSize)
+                .Take(searchRequest.PageSize)
+                .Select(b => new
+                {
+                    b.Isbn,
+                    b.Title,
+                    b.PageCount,
+                    b.AveragePrice,
+                    b.PublishYear,
+                    b.CategoryId,
+                    CategoryName = b.Category.Name,
+                    b.PublisherId,
+                    PublisherName = b.Publisher.Name,
+                    b.ImageUrl,
+                    b.CreatedAt,
+                    b.UpdatedAt,
+                    b.Stock,
+                    b.Status,
+                    Authors = b.AuthorBooks.Select(ab => new AuthorDto
+                    {
+                        AuthorId = ab.Author.AuthorId,
+                        FirstName = ab.Author.FirstName,
+                        LastName = ab.Author.LastName,
+                        FullName = ab.Author.FirstName + " " + ab.Author.LastName,
+                        Gender = ab.Author.Gender,
+                        DateOfBirth = ab.Author.DateOfBirth
+                    }).ToList()
+                })
+                .ToListAsync();
+
+            var books = new List<BookDto>();
+            foreach (var bookData in booksData)
+            {
+                var currentPrice = await GetCurrentPriceAsync(bookData.Isbn);
+                
+                // Apply price filtering based on current price
+                if (searchRequest.MinPrice.HasValue && currentPrice < searchRequest.MinPrice.Value)
+                    continue;
+                if (searchRequest.MaxPrice.HasValue && currentPrice > searchRequest.MaxPrice.Value)
+                    continue;
+                
+                books.Add(new BookDto
+                {
+                    Isbn = bookData.Isbn,
+                    Title = bookData.Title,
+                    PageCount = bookData.PageCount,
+                    AveragePrice = bookData.AveragePrice,
+                    CurrentPrice = currentPrice,
+                    PublishYear = bookData.PublishYear,
+                    CategoryId = bookData.CategoryId,
+                    CategoryName = bookData.CategoryName,
+                    PublisherId = bookData.PublisherId,
+                    PublisherName = bookData.PublisherName,
+                    ImageUrl = bookData.ImageUrl,
+                    CreatedAt = bookData.CreatedAt,
+                    UpdatedAt = bookData.UpdatedAt,
+                    Stock = bookData.Stock,
+                    Status = bookData.Status,
+                    Authors = bookData.Authors
+                });
+            }
+
+            var response = new BookListResponse
+            {
+                Books = books,
+                TotalCount = totalCount,
+                PageNumber = searchRequest.PageNumber,
+                PageSize = searchRequest.PageSize,
+                TotalPages = totalPages
+            };
+
+            return new ApiResponse<BookListResponse>
+            {
+                Success = true,
+                Message = "Get books successfully",
+                Data = response
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<BookListResponse>
+            {
+                Success = false,
+                Message = "Error getting books",
+                Errors = new List<string> { ex.Message }
+            };
+        }
+    }
+
+    public async Task<ApiResponse<BookListResponse>> SearchBooksAsync(BookSearchRequest searchRequest)
+    {
+        try
+        {
+            var query = _context.Books
+                .Include(b => b.Category)
+                .Include(b => b.Publisher)
+                .Include(b => b.AuthorBooks)
+                    .ThenInclude(ab => ab.Author)
+                .Include(b => b.BookPromotions)
+                    .ThenInclude(bp => bp.Promotion)
+                .AsQueryable();
+
+            // Apply search filters
+            if (!string.IsNullOrWhiteSpace(searchRequest.SearchTerm))
+            {
+                var searchTerm = searchRequest.SearchTerm.ToLower().Trim();
+                query = query.Where(b => 
+                    b.Title.ToLower().Contains(searchTerm) ||
+                    b.Isbn.ToLower().Contains(searchTerm) ||
+                    b.AuthorBooks.Any(ab => 
+                        ab.Author.FirstName.ToLower().Contains(searchTerm) ||
+                        ab.Author.LastName.ToLower().Contains(searchTerm) ||
+                        (ab.Author.FirstName + " " + ab.Author.LastName).ToLower().Contains(searchTerm)
+                    ) ||
+                    b.Category.Name.ToLower().Contains(searchTerm) ||
+                    b.Publisher.Name.ToLower().Contains(searchTerm)
+                );
+            }
+
+            if (searchRequest.CategoryId.HasValue)
+            {
+                query = query.Where(b => b.CategoryId == searchRequest.CategoryId.Value);
+            }
+
+            if (searchRequest.PublisherId.HasValue)
+            {
+                query = query.Where(b => b.PublisherId == searchRequest.PublisherId.Value);
             }
 
             if (searchRequest.MinYear.HasValue)
@@ -69,39 +250,42 @@ public class BookService : IBookService
                     ? query.OrderByDescending(b => b.Title) 
                     : query.OrderBy(b => b.Title),
                 "price" => searchRequest.SortDirection?.ToLower() == "desc" 
-                    ? query.OrderByDescending(b => b.UnitPrice) 
-                    : query.OrderBy(b => b.UnitPrice),
+                    ? query.OrderByDescending(b => b.AveragePrice) 
+                    : query.OrderBy(b => b.AveragePrice),
                 "year" => searchRequest.SortDirection?.ToLower() == "desc" 
                     ? query.OrderByDescending(b => b.PublishYear) 
                     : query.OrderBy(b => b.PublishYear),
                 "created" => searchRequest.SortDirection?.ToLower() == "desc" 
                     ? query.OrderByDescending(b => b.CreatedAt) 
                     : query.OrderBy(b => b.CreatedAt),
+                "popular" => searchRequest.SortDirection?.ToLower() == "desc" 
+                    ? query.OrderByDescending(b => b.OrderLines.Sum(ol => ol.Qty)) 
+                    : query.OrderBy(b => b.OrderLines.Sum(ol => ol.Qty)),
                 _ => query.OrderBy(b => b.Title)
             };
 
             var totalCount = await query.CountAsync();
             var totalPages = (int)Math.Ceiling((double)totalCount / searchRequest.PageSize);
 
-            var books = await query
+            var booksData = await query
                 .Skip((searchRequest.PageNumber - 1) * searchRequest.PageSize)
                 .Take(searchRequest.PageSize)
-                .Select(b => new BookDto
+                .Select(b => new
                 {
-                    Isbn = b.Isbn,
-                    Title = b.Title,
-                    PageCount = b.PageCount,
-                    UnitPrice = b.UnitPrice,
-                    PublishYear = b.PublishYear,
-                    CategoryId = b.CategoryId,
+                    b.Isbn,
+                    b.Title,
+                    b.PageCount,
+                    b.AveragePrice,
+                    b.PublishYear,
+                    b.CategoryId,
                     CategoryName = b.Category.Name,
-                    PublisherId = b.PublisherId,
+                    b.PublisherId,
                     PublisherName = b.Publisher.Name,
-                    ImageUrl = b.ImageUrl,
-                    CreatedAt = b.CreatedAt,
-                    UpdatedAt = b.UpdatedAt,
-                    Stock = b.Stock,
-                    Status = b.Status,
+                    b.ImageUrl,
+                    b.CreatedAt,
+                    b.UpdatedAt,
+                    b.Stock,
+                    b.Status,
                     Authors = b.AuthorBooks.Select(ab => new AuthorDto
                     {
                         AuthorId = ab.Author.AuthorId,
@@ -110,9 +294,69 @@ public class BookService : IBookService
                         FullName = ab.Author.FirstName + " " + ab.Author.LastName,
                         Gender = ab.Author.Gender,
                         DateOfBirth = ab.Author.DateOfBirth
-                    }).ToList()
+                    }).ToList(),
+                    Promotions = b.BookPromotions
+                        .Where(bp => bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) && bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow))
+                        .Select(bp => new
+                        {
+                            bp.Promotion.PromotionId,
+                            bp.Promotion.Name,
+                            bp.Promotion.DiscountPct,
+                            bp.Promotion.StartDate,
+                            bp.Promotion.EndDate
+                        }).ToList()
                 })
                 .ToListAsync();
+
+            var books = new List<BookDto>();
+            foreach (var bookData in booksData)
+            {
+                var currentPrice = await GetCurrentPriceAsync(bookData.Isbn);
+                
+                // Apply price filtering based on current price
+                if (searchRequest.MinPrice.HasValue && currentPrice < searchRequest.MinPrice.Value)
+                    continue;
+                if (searchRequest.MaxPrice.HasValue && currentPrice > searchRequest.MaxPrice.Value)
+                    continue;
+                
+                // Calculate discounted price if there are active promotions
+                var discountedPrice = currentPrice;
+                if (bookData.Promotions.Any())
+                {
+                    var maxDiscount = bookData.Promotions.Max(p => p.DiscountPct);
+                    discountedPrice = currentPrice * (1 - maxDiscount / 100);
+                }
+                
+                books.Add(new BookDto
+                {
+                    Isbn = bookData.Isbn,
+                    Title = bookData.Title,
+                    PageCount = bookData.PageCount,
+                    AveragePrice = bookData.AveragePrice,
+                    CurrentPrice = currentPrice,
+                    PublishYear = bookData.PublishYear,
+                    CategoryId = bookData.CategoryId,
+                    CategoryName = bookData.CategoryName,
+                    PublisherId = bookData.PublisherId,
+                    PublisherName = bookData.PublisherName,
+                    ImageUrl = bookData.ImageUrl,
+                    CreatedAt = bookData.CreatedAt,
+                    UpdatedAt = bookData.UpdatedAt,
+                    Stock = bookData.Stock,
+                    Status = bookData.Status,
+                    Authors = bookData.Authors,
+                    DiscountedPrice = discountedPrice,
+                    HasPromotion = bookData.Promotions.Any(),
+                    ActivePromotions = bookData.Promotions.Select(p => new BookPromotionDto
+                    {
+                        PromotionId = p.PromotionId,
+                        Name = p.Name,
+                        DiscountPct = p.DiscountPct,
+                        StartDate = p.StartDate.ToDateTime(TimeOnly.MinValue),
+                        EndDate = p.EndDate.ToDateTime(TimeOnly.MaxValue)
+                    }).ToList()
+                });
+            }
 
             var response = new BookListResponse
             {
@@ -126,7 +370,7 @@ public class BookService : IBookService
             return new ApiResponse<BookListResponse>
             {
                 Success = true,
-                Message = "Lấy danh sách sách thành công",
+                Message = "Search books successfully",
                 Data = response
             };
         }
@@ -135,7 +379,342 @@ public class BookService : IBookService
             return new ApiResponse<BookListResponse>
             {
                 Success = false,
-                Message = "Đã xảy ra lỗi khi lấy danh sách sách",
+                Message = "Error searching books",
+                Errors = new List<string> { ex.Message }
+            };
+        }
+    }
+
+    public async Task<ApiResponse<List<BookDto>>> GetBooksWithPromotionAsync(int limit = 10)
+    {
+        try
+        {
+            var booksData = await _context.Books
+                .Include(b => b.Category)
+                .Include(b => b.Publisher)
+                .Include(b => b.AuthorBooks)
+                    .ThenInclude(ab => ab.Author)
+                .Include(b => b.BookPromotions)
+                    .ThenInclude(bp => bp.Promotion)
+                .Where(b => b.BookPromotions.Any(bp => 
+                    bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) && 
+                    bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow)))
+                .OrderByDescending(b => b.BookPromotions.Max(bp => bp.Promotion.DiscountPct))
+                .Take(limit)
+                .Select(b => new
+                {
+                    b.Isbn,
+                    b.Title,
+                    b.PageCount,
+                    b.AveragePrice,
+                    b.PublishYear,
+                    b.CategoryId,
+                    CategoryName = b.Category.Name,
+                    b.PublisherId,
+                    PublisherName = b.Publisher.Name,
+                    b.ImageUrl,
+                    b.CreatedAt,
+                    b.UpdatedAt,
+                    b.Stock,
+                    b.Status,
+                    Authors = b.AuthorBooks.Select(ab => new AuthorDto
+                    {
+                        AuthorId = ab.Author.AuthorId,
+                        FirstName = ab.Author.FirstName,
+                        LastName = ab.Author.LastName,
+                        FullName = ab.Author.FirstName + " " + ab.Author.LastName,
+                        Gender = ab.Author.Gender,
+                        DateOfBirth = ab.Author.DateOfBirth
+                    }).ToList(),
+                    Promotions = b.BookPromotions
+                        .Where(bp => bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) && bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow))
+                        .Select(bp => new
+                        {
+                            bp.Promotion.PromotionId,
+                            bp.Promotion.Name,
+                            bp.Promotion.DiscountPct,
+                            bp.Promotion.StartDate,
+                            bp.Promotion.EndDate
+                        }).ToList()
+                })
+                .ToListAsync();
+
+            var books = new List<BookDto>();
+            foreach (var bookData in booksData)
+            {
+                var currentPrice = await GetCurrentPriceAsync(bookData.Isbn);
+                var maxDiscount = bookData.Promotions.Max(p => p.DiscountPct);
+                var discountedPrice = currentPrice * (1 - maxDiscount / 100);
+                
+                books.Add(new BookDto
+                {
+                    Isbn = bookData.Isbn,
+                    Title = bookData.Title,
+                    PageCount = bookData.PageCount,
+                    AveragePrice = bookData.AveragePrice,
+                    CurrentPrice = currentPrice,
+                    PublishYear = bookData.PublishYear,
+                    CategoryId = bookData.CategoryId,
+                    CategoryName = bookData.CategoryName,
+                    PublisherId = bookData.PublisherId,
+                    PublisherName = bookData.PublisherName,
+                    ImageUrl = bookData.ImageUrl,
+                    CreatedAt = bookData.CreatedAt,
+                    UpdatedAt = bookData.UpdatedAt,
+                    Stock = bookData.Stock,
+                    Status = bookData.Status,
+                    Authors = bookData.Authors,
+                    DiscountedPrice = discountedPrice,
+                    HasPromotion = true,
+                    ActivePromotions = bookData.Promotions.Select(p => new BookPromotionDto
+                    {
+                        PromotionId = p.PromotionId,
+                        Name = p.Name,
+                        DiscountPct = p.DiscountPct,
+                        StartDate = p.StartDate.ToDateTime(TimeOnly.MinValue),
+                        EndDate = p.EndDate.ToDateTime(TimeOnly.MaxValue)
+                    }).ToList()
+                });
+            }
+
+            return new ApiResponse<List<BookDto>>
+            {
+                Success = true,
+                Message = "Get books with promotion successfully",
+                Data = books
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<List<BookDto>>
+            {
+                Success = false,
+                Message = "Error getting books with promotion",
+                Errors = new List<string> { ex.Message }
+            };
+        }
+    }
+
+    public async Task<ApiResponse<List<BookDto>>> GetBestSellingBooksAsync(int limit = 10)
+    {
+        try
+        {
+            var booksData = await _context.Books
+                .Include(b => b.Category)
+                .Include(b => b.Publisher)
+                .Include(b => b.AuthorBooks)
+                    .ThenInclude(ab => ab.Author)
+                .Include(b => b.BookPromotions)
+                    .ThenInclude(bp => bp.Promotion)
+                .Where(b => b.OrderLines.Any())
+                .OrderByDescending(b => b.OrderLines.Sum(ol => ol.Qty))
+                .Take(limit)
+                .Select(b => new
+                {
+                    b.Isbn,
+                    b.Title,
+                    b.PageCount,
+                    b.AveragePrice,
+                    b.PublishYear,
+                    b.CategoryId,
+                    CategoryName = b.Category.Name,
+                    b.PublisherId,
+                    PublisherName = b.Publisher.Name,
+                    b.ImageUrl,
+                    b.CreatedAt,
+                    b.UpdatedAt,
+                    b.Stock,
+                    b.Status,
+                    TotalSold = b.OrderLines.Sum(ol => ol.Qty),
+                    Authors = b.AuthorBooks.Select(ab => new AuthorDto
+                    {
+                        AuthorId = ab.Author.AuthorId,
+                        FirstName = ab.Author.FirstName,
+                        LastName = ab.Author.LastName,
+                        FullName = ab.Author.FirstName + " " + ab.Author.LastName,
+                        Gender = ab.Author.Gender,
+                        DateOfBirth = ab.Author.DateOfBirth
+                    }).ToList(),
+                    Promotions = b.BookPromotions
+                        .Where(bp => bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) && bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow))
+                        .Select(bp => new
+                        {
+                            bp.Promotion.PromotionId,
+                            bp.Promotion.Name,
+                            bp.Promotion.DiscountPct,
+                            bp.Promotion.StartDate,
+                            bp.Promotion.EndDate
+                        }).ToList()
+                })
+                .ToListAsync();
+
+            var books = new List<BookDto>();
+            foreach (var bookData in booksData)
+            {
+                var currentPrice = await GetCurrentPriceAsync(bookData.Isbn);
+                var discountedPrice = currentPrice;
+                if (bookData.Promotions.Any())
+                {
+                    var maxDiscount = bookData.Promotions.Max(p => p.DiscountPct);
+                    discountedPrice = currentPrice * (1 - maxDiscount / 100);
+                }
+                
+                books.Add(new BookDto
+                {
+                    Isbn = bookData.Isbn,
+                    Title = bookData.Title,
+                    PageCount = bookData.PageCount,
+                    AveragePrice = bookData.AveragePrice,
+                    CurrentPrice = currentPrice,
+                    PublishYear = bookData.PublishYear,
+                    CategoryId = bookData.CategoryId,
+                    CategoryName = bookData.CategoryName,
+                    PublisherId = bookData.PublisherId,
+                    PublisherName = bookData.PublisherName,
+                    ImageUrl = bookData.ImageUrl,
+                    CreatedAt = bookData.CreatedAt,
+                    UpdatedAt = bookData.UpdatedAt,
+                    Stock = bookData.Stock,
+                    Status = bookData.Status,
+                    Authors = bookData.Authors,
+                    DiscountedPrice = discountedPrice,
+                    HasPromotion = bookData.Promotions.Any(),
+                    TotalSold = bookData.TotalSold,
+                    ActivePromotions = bookData.Promotions.Select(p => new BookPromotionDto
+                    {
+                        PromotionId = p.PromotionId,
+                        Name = p.Name,
+                        DiscountPct = p.DiscountPct,
+                        StartDate = p.StartDate.ToDateTime(TimeOnly.MinValue),
+                        EndDate = p.EndDate.ToDateTime(TimeOnly.MaxValue)
+                    }).ToList()
+                });
+            }
+
+            return new ApiResponse<List<BookDto>>
+            {
+                Success = true,
+                Message = "Get best selling books successfully",
+                Data = books
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<List<BookDto>>
+            {
+                Success = false,
+                Message = "Error getting best selling books",
+                Errors = new List<string> { ex.Message }
+            };
+        }
+    }
+
+    public async Task<ApiResponse<List<BookDto>>> GetLatestBooksAsync(int limit = 10)
+    {
+        try
+        {
+            var booksData = await _context.Books
+                .Include(b => b.Category)
+                .Include(b => b.Publisher)
+                .Include(b => b.AuthorBooks)
+                    .ThenInclude(ab => ab.Author)
+                .Include(b => b.BookPromotions)
+                    .ThenInclude(bp => bp.Promotion)
+                .OrderByDescending(b => b.CreatedAt)
+                .Take(limit)
+                .Select(b => new
+                {
+                    b.Isbn,
+                    b.Title,
+                    b.PageCount,
+                    b.AveragePrice,
+                    b.PublishYear,
+                    b.CategoryId,
+                    CategoryName = b.Category.Name,
+                    b.PublisherId,
+                    PublisherName = b.Publisher.Name,
+                    b.ImageUrl,
+                    b.CreatedAt,
+                    b.UpdatedAt,
+                    b.Stock,
+                    b.Status,
+                    Authors = b.AuthorBooks.Select(ab => new AuthorDto
+                    {
+                        AuthorId = ab.Author.AuthorId,
+                        FirstName = ab.Author.FirstName,
+                        LastName = ab.Author.LastName,
+                        FullName = ab.Author.FirstName + " " + ab.Author.LastName,
+                        Gender = ab.Author.Gender,
+                        DateOfBirth = ab.Author.DateOfBirth
+                    }).ToList(),
+                    Promotions = b.BookPromotions
+                        .Where(bp => bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) && bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow))
+                        .Select(bp => new
+                        {
+                            bp.Promotion.PromotionId,
+                            bp.Promotion.Name,
+                            bp.Promotion.DiscountPct,
+                            bp.Promotion.StartDate,
+                            bp.Promotion.EndDate
+                        }).ToList()
+                })
+                .ToListAsync();
+
+            var books = new List<BookDto>();
+            foreach (var bookData in booksData)
+            {
+                var currentPrice = await GetCurrentPriceAsync(bookData.Isbn);
+                var discountedPrice = currentPrice;
+                if (bookData.Promotions.Any())
+                {
+                    var maxDiscount = bookData.Promotions.Max(p => p.DiscountPct);
+                    discountedPrice = currentPrice * (1 - maxDiscount / 100);
+                }
+                
+                books.Add(new BookDto
+                {
+                    Isbn = bookData.Isbn,
+                    Title = bookData.Title,
+                    PageCount = bookData.PageCount,
+                    AveragePrice = bookData.AveragePrice,
+                    CurrentPrice = currentPrice,
+                    PublishYear = bookData.PublishYear,
+                    CategoryId = bookData.CategoryId,
+                    CategoryName = bookData.CategoryName,
+                    PublisherId = bookData.PublisherId,
+                    PublisherName = bookData.PublisherName,
+                    ImageUrl = bookData.ImageUrl,
+                    CreatedAt = bookData.CreatedAt,
+                    UpdatedAt = bookData.UpdatedAt,
+                    Stock = bookData.Stock,
+                    Status = bookData.Status,
+                    Authors = bookData.Authors,
+                    DiscountedPrice = discountedPrice,
+                    HasPromotion = bookData.Promotions.Any(),
+                    ActivePromotions = bookData.Promotions.Select(p => new BookPromotionDto
+                    {
+                        PromotionId = p.PromotionId,
+                        Name = p.Name,
+                        DiscountPct = p.DiscountPct,
+                        StartDate = p.StartDate.ToDateTime(TimeOnly.MinValue),
+                        EndDate = p.EndDate.ToDateTime(TimeOnly.MaxValue)
+                    }).ToList()
+                });
+            }
+
+            return new ApiResponse<List<BookDto>>
+            {
+                Success = true,
+                Message = "Get latest books successfully",
+                Data = books
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<List<BookDto>>
+            {
+                Success = false,
+                Message = "Error getting latest books",
                 Errors = new List<string> { ex.Message }
             };
         }
@@ -145,28 +724,28 @@ public class BookService : IBookService
     {
         try
         {
-            var book = await _context.Books
+            var bookData = await _context.Books
                 .Include(b => b.Category)
                 .Include(b => b.Publisher)
                 .Include(b => b.AuthorBooks)
                     .ThenInclude(ab => ab.Author)
                 .Where(b => b.Isbn == isbn)
-                .Select(b => new BookDto
+                .Select(b => new
                 {
-                    Isbn = b.Isbn,
-                    Title = b.Title,
-                    PageCount = b.PageCount,
-                    UnitPrice = b.UnitPrice,
-                    PublishYear = b.PublishYear,
-                    CategoryId = b.CategoryId,
+                    b.Isbn,
+                    b.Title,
+                    b.PageCount,
+                    b.AveragePrice,
+                    b.PublishYear,
+                    b.CategoryId,
                     CategoryName = b.Category.Name,
-                    PublisherId = b.PublisherId,
+                    b.PublisherId,
                     PublisherName = b.Publisher.Name,
-                    ImageUrl = b.ImageUrl,
-                    CreatedAt = b.CreatedAt,
-                    UpdatedAt = b.UpdatedAt,
-                    Stock = b.Stock,
-                    Status = b.Status,
+                    b.ImageUrl,
+                    b.CreatedAt,
+                    b.UpdatedAt,
+                    b.Stock,
+                    b.Status,
                     Authors = b.AuthorBooks.Select(ab => new AuthorDto
                     {
                         AuthorId = ab.Author.AuthorId,
@@ -179,20 +758,41 @@ public class BookService : IBookService
                 })
                 .FirstOrDefaultAsync();
 
-            if (book == null)
+            if (bookData == null)
             {
                 return new ApiResponse<BookDto>
                 {
                     Success = false,
-                    Message = "Không tìm thấy sách",
-                    Errors = new List<string> { "Sách không tồn tại" }
+                    Message = "Book not found",
+                    Errors = new List<string> { "Book does not exist" }
                 };
             }
+
+            var currentPrice = await GetCurrentPriceAsync(bookData.Isbn);
+            var book = new BookDto
+            {
+                Isbn = bookData.Isbn,
+                Title = bookData.Title,
+                PageCount = bookData.PageCount,
+                AveragePrice = bookData.AveragePrice,
+                CurrentPrice = currentPrice,
+                PublishYear = bookData.PublishYear,
+                CategoryId = bookData.CategoryId,
+                CategoryName = bookData.CategoryName,
+                PublisherId = bookData.PublisherId,
+                PublisherName = bookData.PublisherName,
+                ImageUrl = bookData.ImageUrl,
+                CreatedAt = bookData.CreatedAt,
+                UpdatedAt = bookData.UpdatedAt,
+                Stock = bookData.Stock,
+                Status = bookData.Status,
+                Authors = bookData.Authors
+            };
 
             return new ApiResponse<BookDto>
             {
                 Success = true,
-                Message = "Lấy thông tin sách thành công",
+                Message = "Get book information successfully",
                 Data = book
             };
         }
@@ -201,7 +801,7 @@ public class BookService : IBookService
             return new ApiResponse<BookDto>
             {
                 Success = false,
-                Message = "Đã xảy ra lỗi khi lấy thông tin sách",
+                Message = "Error getting book information",
                 Errors = new List<string> { ex.Message }
             };
         }
@@ -211,18 +811,6 @@ public class BookService : IBookService
     {
         try
         {
-            // Check if publisher exists
-            var publisherExists = await _context.Publishers.AnyAsync(p => p.PublisherId == publisherId);
-            if (!publisherExists)
-            {
-                return new ApiResponse<BookListResponse>
-                {
-                    Success = false,
-                    Message = "Không tìm thấy nhà xuất bản",
-                    Errors = new List<string> { "Nhà xuất bản không tồn tại" }
-                };
-            }
-
             var query = _context.Books
                 .Include(b => b.Category)
                 .Include(b => b.Publisher)
@@ -230,38 +818,35 @@ public class BookService : IBookService
                     .ThenInclude(ab => ab.Author)
                 .Where(b => b.PublisherId == publisherId);
 
-            // Apply search filter
             if (!string.IsNullOrWhiteSpace(searchTerm))
             {
-                query = query.Where(b => b.Title.Contains(searchTerm) || 
-                                       b.Category.Name.Contains(searchTerm) ||
-                                       b.AuthorBooks.Any(ab => ab.Author.FirstName.Contains(searchTerm) || 
-                                                              ab.Author.LastName.Contains(searchTerm)));
+                query = query.Where(b => b.Title.Contains(searchTerm) ||
+                                       b.Isbn.Contains(searchTerm));
             }
 
             var totalCount = await query.CountAsync();
             var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
 
-            var books = await query
-                .OrderBy(b => b.Title)
+            var booksData = await query
+                .OrderByDescending(b => b.CreatedAt)
                 .Skip((pageNumber - 1) * pageSize)
                 .Take(pageSize)
-                .Select(b => new BookDto
+                .Select(b => new
                 {
-                    Isbn = b.Isbn,
-                    Title = b.Title,
-                    PageCount = b.PageCount,
-                    UnitPrice = b.UnitPrice,
-                    PublishYear = b.PublishYear,
-                    CategoryId = b.CategoryId,
+                    b.Isbn,
+                    b.Title,
+                    b.PageCount,
+                    b.AveragePrice,
+                    b.PublishYear,
+                    b.CategoryId,
                     CategoryName = b.Category.Name,
-                    PublisherId = b.PublisherId,
+                    b.PublisherId,
                     PublisherName = b.Publisher.Name,
-                    ImageUrl = b.ImageUrl,
-                    CreatedAt = b.CreatedAt,
-                    UpdatedAt = b.UpdatedAt,
-                    Stock = b.Stock,
-                    Status = b.Status,
+                    b.ImageUrl,
+                    b.CreatedAt,
+                    b.UpdatedAt,
+                    b.Stock,
+                    b.Status,
                     Authors = b.AuthorBooks.Select(ab => new AuthorDto
                     {
                         AuthorId = ab.Author.AuthorId,
@@ -273,6 +858,31 @@ public class BookService : IBookService
                     }).ToList()
                 })
                 .ToListAsync();
+
+            var books = new List<BookDto>();
+            foreach (var bookData in booksData)
+            {
+                var currentPrice = await GetCurrentPriceAsync(bookData.Isbn);
+                books.Add(new BookDto
+                {
+                    Isbn = bookData.Isbn,
+                    Title = bookData.Title,
+                    PageCount = bookData.PageCount,
+                    AveragePrice = bookData.AveragePrice,
+                    CurrentPrice = currentPrice,
+                    PublishYear = bookData.PublishYear,
+                    CategoryId = bookData.CategoryId,
+                    CategoryName = bookData.CategoryName,
+                    PublisherId = bookData.PublisherId,
+                    PublisherName = bookData.PublisherName,
+                    ImageUrl = bookData.ImageUrl,
+                    CreatedAt = bookData.CreatedAt,
+                    UpdatedAt = bookData.UpdatedAt,
+                    Stock = bookData.Stock,
+                    Status = bookData.Status,
+                    Authors = bookData.Authors
+                });
+            }
 
             var response = new BookListResponse
             {
@@ -286,7 +896,7 @@ public class BookService : IBookService
             return new ApiResponse<BookListResponse>
             {
                 Success = true,
-                Message = "Lấy danh sách sách theo nhà xuất bản thành công",
+                Message = "Get books by publisher successfully",
                 Data = response
             };
         }
@@ -295,7 +905,7 @@ public class BookService : IBookService
             return new ApiResponse<BookListResponse>
             {
                 Success = false,
-                Message = "Có lỗi xảy ra khi lấy danh sách sách theo nhà xuất bản",
+                Message = "Error getting books by publisher",
                 Errors = new List<string> { ex.Message }
             };
         }
@@ -314,8 +924,8 @@ public class BookService : IBookService
                 return new ApiResponse<BookDto>
                 {
                     Success = false,
-                    Message = "ISBN đã tồn tại",
-                    Errors = new List<string> { "Sách với ISBN này đã được tạo trước đó" }
+                    Message = "ISBN already exists",
+                    Errors = new List<string> { "Book with this ISBN already exists" }
                 };
             }
 
@@ -326,8 +936,8 @@ public class BookService : IBookService
                 return new ApiResponse<BookDto>
                 {
                     Success = false,
-                    Message = "Danh mục không tồn tại",
-                    Errors = new List<string> { "Danh mục được chọn không tồn tại" }
+                    Message = "Category not found",
+                    Errors = new List<string> { "Selected category does not exist" }
                 };
             }
 
@@ -338,8 +948,8 @@ public class BookService : IBookService
                 return new ApiResponse<BookDto>
                 {
                     Success = false,
-                    Message = "Nhà xuất bản không tồn tại",
-                    Errors = new List<string> { "Nhà xuất bản được chọn không tồn tại" }
+                    Message = "Publisher not found",
+                    Errors = new List<string> { "Selected publisher does not exist" }
                 };
             }
 
@@ -356,9 +966,25 @@ public class BookService : IBookService
                 return new ApiResponse<BookDto>
                 {
                     Success = false,
-                    Message = "Tác giả không tồn tại",
-                    Errors = new List<string> { $"Các tác giả với ID {string.Join(", ", missingAuthorIds)} không tồn tại" }
+                    Message = "Authors not found",
+                    Errors = new List<string> { $"Authors with IDs {string.Join(", ", missingAuthorIds)} do not exist" }
                 };
+            }
+
+            // Handle image upload
+            string? imageUrl = null;
+            if (createBookDto.ImageFile != null && createBookDto.ImageFile.Length > 0)
+            {
+                imageUrl = await UploadImageToCloudinaryAsync(createBookDto.ImageFile, createBookDto.Isbn);
+                if (string.IsNullOrEmpty(imageUrl))
+                {
+                    return new ApiResponse<BookDto>
+                    {
+                        Success = false,
+                        Message = "Cannot upload image to Cloudinary",
+                        Errors = new List<string> { "Error occurred while uploading image" }
+                    };
+                }
             }
 
             var book = new Book
@@ -366,14 +992,25 @@ public class BookService : IBookService
                 Isbn = createBookDto.Isbn,
                 Title = createBookDto.Title,
                 PageCount = createBookDto.PageCount,
-                UnitPrice = createBookDto.UnitPrice,
+                AveragePrice = createBookDto.InitialPrice,
                 PublishYear = createBookDto.PublishYear,
                 CategoryId = createBookDto.CategoryId,
                 PublisherId = createBookDto.PublisherId,
-                ImageUrl = createBookDto.ImageUrl
+                ImageUrl = imageUrl
             };
 
             _context.Books.Add(book);
+
+            // Create initial price change record
+            var initialPriceChange = new PriceChange
+            {
+                Isbn = createBookDto.Isbn,
+                OldPrice = 0,
+                NewPrice = createBookDto.InitialPrice,
+                ChangedAt = DateTime.UtcNow,
+                EmployeeId = 1 // Assuming admin employee_id = 1
+            };
+            _context.PriceChanges.Add(initialPriceChange);
 
             // Add author-book relationships
             foreach (var authorId in authorIds)
@@ -388,28 +1025,28 @@ public class BookService : IBookService
             await _context.SaveChangesAsync();
 
             // Load the created book with related data
-            var createdBook = await _context.Books
+            var createdBookData = await _context.Books
                 .Include(b => b.Category)
                 .Include(b => b.Publisher)
                 .Include(b => b.AuthorBooks)
                     .ThenInclude(ab => ab.Author)
                 .Where(b => b.Isbn == book.Isbn)
-                .Select(b => new BookDto
+                .Select(b => new
                 {
-                    Isbn = b.Isbn,
-                    Title = b.Title,
-                    PageCount = b.PageCount,
-                    UnitPrice = b.UnitPrice,
-                    PublishYear = b.PublishYear,
-                    CategoryId = b.CategoryId,
+                    b.Isbn,
+                    b.Title,
+                    b.PageCount,
+                    b.AveragePrice,
+                    b.PublishYear,
+                    b.CategoryId,
                     CategoryName = b.Category.Name,
-                    PublisherId = b.PublisherId,
+                    b.PublisherId,
                     PublisherName = b.Publisher.Name,
-                    ImageUrl = b.ImageUrl,
-                    CreatedAt = b.CreatedAt,
-                    UpdatedAt = b.UpdatedAt,
-                    Stock = b.Stock,
-                    Status = b.Status,
+                    b.ImageUrl,
+                    b.CreatedAt,
+                    b.UpdatedAt,
+                    b.Stock,
+                    b.Status,
                     Authors = b.AuthorBooks.Select(ab => new AuthorDto
                     {
                         AuthorId = ab.Author.AuthorId,
@@ -422,10 +1059,31 @@ public class BookService : IBookService
                 })
                 .FirstAsync();
 
+            var currentPrice = await GetCurrentPriceAsync(createdBookData.Isbn);
+            var createdBook = new BookDto
+            {
+                Isbn = createdBookData.Isbn,
+                Title = createdBookData.Title,
+                PageCount = createdBookData.PageCount,
+                AveragePrice = createdBookData.AveragePrice,
+                CurrentPrice = currentPrice,
+                PublishYear = createdBookData.PublishYear,
+                CategoryId = createdBookData.CategoryId,
+                CategoryName = createdBookData.CategoryName,
+                PublisherId = createdBookData.PublisherId,
+                PublisherName = createdBookData.PublisherName,
+                ImageUrl = createdBookData.ImageUrl,
+                CreatedAt = createdBookData.CreatedAt,
+                UpdatedAt = createdBookData.UpdatedAt,
+                Stock = createdBookData.Stock,
+                Status = createdBookData.Status,
+                Authors = createdBookData.Authors
+            };
+
             return new ApiResponse<BookDto>
             {
                 Success = true,
-                Message = "Tạo sách thành công",
+                Message = "Book created successfully",
                 Data = createdBook
             };
         }
@@ -434,7 +1092,7 @@ public class BookService : IBookService
             return new ApiResponse<BookDto>
             {
                 Success = false,
-                Message = "Đã xảy ra lỗi khi tạo sách",
+                Message = "Error creating book",
                 Errors = new List<string> { ex.Message }
             };
         }
@@ -444,17 +1102,14 @@ public class BookService : IBookService
     {
         try
         {
-            var book = await _context.Books
-                .Include(b => b.AuthorBooks)
-                .FirstOrDefaultAsync(b => b.Isbn == isbn);
-
+            var book = await _context.Books.FindAsync(isbn);
             if (book == null)
             {
                 return new ApiResponse<BookDto>
                 {
                     Success = false,
-                    Message = "Không tìm thấy sách",
-                    Errors = new List<string> { "Sách không tồn tại" }
+                    Message = "Book not found",
+                    Errors = new List<string> { "Book does not exist" }
                 };
             }
 
@@ -465,8 +1120,8 @@ public class BookService : IBookService
                 return new ApiResponse<BookDto>
                 {
                     Success = false,
-                    Message = "Danh mục không tồn tại",
-                    Errors = new List<string> { "Danh mục được chọn không tồn tại" }
+                    Message = "Category not found",
+                    Errors = new List<string> { "Selected category does not exist" }
                 };
             }
 
@@ -477,8 +1132,8 @@ public class BookService : IBookService
                 return new ApiResponse<BookDto>
                 {
                     Success = false,
-                    Message = "Nhà xuất bản không tồn tại",
-                    Errors = new List<string> { "Nhà xuất bản được chọn không tồn tại" }
+                    Message = "Publisher not found",
+                    Errors = new List<string> { "Selected publisher does not exist" }
                 };
             }
 
@@ -495,95 +1150,69 @@ public class BookService : IBookService
                 return new ApiResponse<BookDto>
                 {
                     Success = false,
-                    Message = "Tác giả không tồn tại",
-                    Errors = new List<string> { $"Các tác giả với ID {string.Join(", ", missingAuthorIds)} không tồn tại" }
+                    Message = "Authors not found",
+                    Errors = new List<string> { $"Authors with IDs {string.Join(", ", missingAuthorIds)} do not exist" }
                 };
+            }
+
+            // Handle image upload
+            string? finalImageUrl = updateBookDto.ImageUrl;
+            if (updateBookDto.ImageFile != null && updateBookDto.ImageFile.Length > 0)
+            {
+                var uploadedImageUrl = await UploadImageToCloudinaryAsync(updateBookDto.ImageFile, isbn);
+                if (!string.IsNullOrEmpty(uploadedImageUrl))
+                {
+                    finalImageUrl = uploadedImageUrl;
+                }
+                else
+                {
+                    return new ApiResponse<BookDto>
+                    {
+                        Success = false,
+                        Message = "Cannot upload image to Cloudinary",
+                        Errors = new List<string> { "Error occurred while uploading image" }
+                    };
+                }
             }
 
             // Update book properties
             book.Title = updateBookDto.Title;
             book.PageCount = updateBookDto.PageCount;
-            book.UnitPrice = updateBookDto.UnitPrice;
+            // Note: Price updates should be done through PriceChange table, not directly on Book
+            // book.AveragePrice will be updated by trigger when PriceChange is added
             book.PublishYear = updateBookDto.PublishYear;
             book.CategoryId = updateBookDto.CategoryId;
             book.PublisherId = updateBookDto.PublisherId;
-            book.ImageUrl = updateBookDto.ImageUrl;
+            book.ImageUrl = finalImageUrl;
             book.UpdatedAt = DateTime.UtcNow;
 
-            // Update author relationships
-            var currentAuthorIds = book.AuthorBooks.Select(ab => ab.AuthorId).ToList();
-            var authorsToAdd = authorIds.Except(currentAuthorIds).ToList();
-            var authorsToRemove = currentAuthorIds.Except(authorIds).ToList();
+            // Update author-book relationships
+            var existingAuthorBooks = await _context.AuthorBooks
+                .Where(ab => ab.Isbn == isbn)
+                .ToListAsync();
 
-            // Remove old relationships
-            var authorBooksToRemove = book.AuthorBooks
-                .Where(ab => authorsToRemove.Contains(ab.AuthorId))
-                .ToList();
-            foreach (var authorBook in authorBooksToRemove)
-            {
-                _context.AuthorBooks.Remove(authorBook);
-            }
+            _context.AuthorBooks.RemoveRange(existingAuthorBooks);
 
-            // Add new relationships
-            foreach (var authorId in authorsToAdd)
+            foreach (var authorId in authorIds)
             {
                 _context.AuthorBooks.Add(new AuthorBook
                 {
                     AuthorId = authorId,
-                    Isbn = book.Isbn
+                    Isbn = isbn
                 });
             }
 
             await _context.SaveChangesAsync();
 
-            // Load the updated book with related data
-            var updatedBook = await _context.Books
-                .Include(b => b.Category)
-                .Include(b => b.Publisher)
-                .Include(b => b.AuthorBooks)
-                    .ThenInclude(ab => ab.Author)
-                .Where(b => b.Isbn == book.Isbn)
-                .Select(b => new BookDto
-                {
-                    Isbn = b.Isbn,
-                    Title = b.Title,
-                    PageCount = b.PageCount,
-                    UnitPrice = b.UnitPrice,
-                    PublishYear = b.PublishYear,
-                    CategoryId = b.CategoryId,
-                    CategoryName = b.Category.Name,
-                    PublisherId = b.PublisherId,
-                    PublisherName = b.Publisher.Name,
-                    ImageUrl = b.ImageUrl,
-                    CreatedAt = b.CreatedAt,
-                    UpdatedAt = b.UpdatedAt,
-                    Stock = b.Stock,
-                    Status = b.Status,
-                    Authors = b.AuthorBooks.Select(ab => new AuthorDto
-                    {
-                        AuthorId = ab.Author.AuthorId,
-                        FirstName = ab.Author.FirstName,
-                        LastName = ab.Author.LastName,
-                        FullName = ab.Author.FirstName + " " + ab.Author.LastName,
-                        Gender = ab.Author.Gender,
-                        DateOfBirth = ab.Author.DateOfBirth
-                    }).ToList()
-                })
-                .FirstAsync();
-
-            return new ApiResponse<BookDto>
-            {
-                Success = true,
-                Message = "Cập nhật sách thành công",
-                Data = updatedBook
-            };
+            // Return the updated book
+            return await GetBookByIsbnAsync(isbn);
         }
         catch (Exception ex)
         {
             return new ApiResponse<BookDto>
             {
                 Success = false,
-                Message = "Đã xảy ra lỗi khi cập nhật sách",
+                Message = "Error updating book",
                 Errors = new List<string> { ex.Message }
             };
         }
@@ -593,39 +1222,24 @@ public class BookService : IBookService
     {
         try
         {
-            var book = await _context.Books
-                .Include(b => b.OrderLines)
-                .Include(b => b.PurchaseOrderLines)
-                .FirstOrDefaultAsync(b => b.Isbn == isbn);
-
+            var book = await _context.Books.FindAsync(isbn);
             if (book == null)
             {
                 return new ApiResponse<bool>
                 {
                     Success = false,
-                    Message = "Không tìm thấy sách",
-                    Errors = new List<string> { "Sách không tồn tại" }
+                    Message = "Book not found",
+                    Errors = new List<string> { "Book does not exist" }
                 };
             }
 
-            if (book.OrderLines.Any() || book.PurchaseOrderLines.Any())
-            {
-                return new ApiResponse<bool>
-                {
-                    Success = false,
-                    Message = "Không thể xóa sách",
-                    Errors = new List<string> { "Sách đang được sử dụng trong đơn hàng hoặc đơn đặt mua, không thể xóa" }
-                };
-            }
-
-            // Soft delete: set status = false (0)
-            book.Status = false;
+            _context.Books.Remove(book);
             await _context.SaveChangesAsync();
 
             return new ApiResponse<bool>
             {
                 Success = true,
-                Message = "Ngừng kinh doanh sách thành công",
+                Message = "Book deleted successfully",
                 Data = true
             };
         }
@@ -634,7 +1248,7 @@ public class BookService : IBookService
             return new ApiResponse<bool>
             {
                 Success = false,
-                Message = "Đã xảy ra lỗi khi xóa sách",
+                Message = "Error deleting book",
                 Errors = new List<string> { ex.Message }
             };
         }
@@ -644,23 +1258,36 @@ public class BookService : IBookService
     {
         try
         {
-            var book = await _context.Books.FirstOrDefaultAsync(b => b.Isbn == isbn);
+            var book = await _context.Books.FindAsync(isbn);
             if (book == null)
             {
                 return new ApiResponse<bool>
                 {
                     Success = false,
-                    Message = "Không tìm thấy sách",
-                    Errors = new List<string> { "Sách không tồn tại" }
+                    Message = "Book not found",
+                    Errors = new List<string> { "Book does not exist" }
                 };
             }
+
             book.Status = false;
+            book.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
-            return new ApiResponse<bool> { Success = true, Message = "Đã tắt sách", Data = true };
+
+            return new ApiResponse<bool>
+            {
+                Success = true,
+                Message = "Book deactivated successfully",
+                Data = true
+            };
         }
         catch (Exception ex)
         {
-            return new ApiResponse<bool> { Success = false, Message = "Đã xảy ra lỗi khi tắt sách", Errors = new List<string> { ex.Message } };
+            return new ApiResponse<bool>
+            {
+                Success = false,
+                Message = "Error deactivating book",
+                Errors = new List<string> { ex.Message }
+            };
         }
     }
 
@@ -668,23 +1295,36 @@ public class BookService : IBookService
     {
         try
         {
-            var book = await _context.Books.FirstOrDefaultAsync(b => b.Isbn == isbn);
+            var book = await _context.Books.FindAsync(isbn);
             if (book == null)
             {
                 return new ApiResponse<bool>
                 {
                     Success = false,
-                    Message = "Không tìm thấy sách",
-                    Errors = new List<string> { "Sách không tồn tại" }
+                    Message = "Book not found",
+                    Errors = new List<string> { "Book does not exist" }
                 };
             }
+
             book.Status = true;
+            book.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
-            return new ApiResponse<bool> { Success = true, Message = "Đã bật sách", Data = true };
+
+            return new ApiResponse<bool>
+            {
+                Success = true,
+                Message = "Book activated successfully",
+                Data = true
+            };
         }
         catch (Exception ex)
         {
-            return new ApiResponse<bool> { Success = false, Message = "Đã xảy ra lỗi khi bật sách", Errors = new List<string> { ex.Message } };
+            return new ApiResponse<bool>
+            {
+                Success = false,
+                Message = "Error activating book",
+                Errors = new List<string> { ex.Message }
+            };
         }
     }
 
@@ -693,6 +1333,8 @@ public class BookService : IBookService
         try
         {
             var authors = await _context.Authors
+                .OrderBy(a => a.FirstName)
+                .ThenBy(a => a.LastName)
                 .Select(a => new AuthorDto
                 {
                     AuthorId = a.AuthorId,
@@ -700,18 +1342,14 @@ public class BookService : IBookService
                     LastName = a.LastName,
                     FullName = a.FirstName + " " + a.LastName,
                     Gender = a.Gender,
-                    DateOfBirth = a.DateOfBirth,
-                    Address = a.Address,
-                    Email = a.Email,
-                    BookCount = a.AuthorBooks.Count
+                    DateOfBirth = a.DateOfBirth
                 })
-                .OrderBy(a => a.FullName)
                 .ToListAsync();
 
             return new ApiResponse<List<AuthorDto>>
             {
                 Success = true,
-                Message = "Lấy danh sách tác giả thành công",
+                Message = "Get authors successfully",
                 Data = authors
             };
         }
@@ -720,7 +1358,7 @@ public class BookService : IBookService
             return new ApiResponse<List<AuthorDto>>
             {
                 Success = false,
-                Message = "Đã xảy ra lỗi khi lấy danh sách tác giả",
+                Message = "Error getting authors",
                 Errors = new List<string> { ex.Message }
             };
         }
@@ -735,9 +1373,7 @@ public class BookService : IBookService
                 FirstName = createAuthorDto.FirstName,
                 LastName = createAuthorDto.LastName,
                 Gender = createAuthorDto.Gender,
-                DateOfBirth = createAuthorDto.DateOfBirth,
-                Address = createAuthorDto.Address,
-                Email = createAuthorDto.Email
+                DateOfBirth = createAuthorDto.DateOfBirth
             };
 
             _context.Authors.Add(author);
@@ -750,16 +1386,13 @@ public class BookService : IBookService
                 LastName = author.LastName,
                 FullName = author.FirstName + " " + author.LastName,
                 Gender = author.Gender,
-                DateOfBirth = author.DateOfBirth,
-                Address = author.Address,
-                Email = author.Email,
-                BookCount = 0
+                DateOfBirth = author.DateOfBirth
             };
 
             return new ApiResponse<AuthorDto>
             {
                 Success = true,
-                Message = "Tạo tác giả thành công",
+                Message = "Author created successfully",
                 Data = authorDto
             };
         }
@@ -768,7 +1401,7 @@ public class BookService : IBookService
             return new ApiResponse<AuthorDto>
             {
                 Success = false,
-                Message = "Đã xảy ra lỗi khi tạo tác giả",
+                Message = "Error creating author",
                 Errors = new List<string> { ex.Message }
             };
         }
@@ -778,29 +1411,29 @@ public class BookService : IBookService
     {
         try
         {
-            limit = Math.Clamp(limit, 1, 50);
-            var books = await _context.Books
+            var booksData = await _context.Books
                 .Include(b => b.Category)
                 .Include(b => b.Publisher)
-                .Include(b => b.AuthorBooks).ThenInclude(ab => ab.Author)
+                .Include(b => b.AuthorBooks)
+                    .ThenInclude(ab => ab.Author)
                 .OrderByDescending(b => b.CreatedAt)
                 .Take(limit)
-                .Select(b => new BookDto
+                .Select(b => new
                 {
-                    Isbn = b.Isbn,
-                    Title = b.Title,
-                    PageCount = b.PageCount,
-                    UnitPrice = b.UnitPrice,
-                    PublishYear = b.PublishYear,
-                    CategoryId = b.CategoryId,
+                    b.Isbn,
+                    b.Title,
+                    b.PageCount,
+                    b.AveragePrice,
+                    b.PublishYear,
+                    b.CategoryId,
                     CategoryName = b.Category.Name,
-                    PublisherId = b.PublisherId,
+                    b.PublisherId,
                     PublisherName = b.Publisher.Name,
-                    ImageUrl = b.ImageUrl,
-                    CreatedAt = b.CreatedAt,
-                    UpdatedAt = b.UpdatedAt,
-                    Stock = b.Stock,
-                    Status = b.Status,
+                    b.ImageUrl,
+                    b.CreatedAt,
+                    b.UpdatedAt,
+                    b.Stock,
+                    b.Status,
                     Authors = b.AuthorBooks.Select(ab => new AuthorDto
                     {
                         AuthorId = ab.Author.AuthorId,
@@ -813,11 +1446,45 @@ public class BookService : IBookService
                 })
                 .ToListAsync();
 
+            var books = new List<BookDto>();
+            foreach (var bookData in booksData)
+            {
+                var currentPrice = await GetCurrentPriceAsync(bookData.Isbn);
+                books.Add(new BookDto
+                {
+                    Isbn = bookData.Isbn,
+                    Title = bookData.Title,
+                    PageCount = bookData.PageCount,
+                    AveragePrice = bookData.AveragePrice,
+                    CurrentPrice = currentPrice,
+                    PublishYear = bookData.PublishYear,
+                    CategoryId = bookData.CategoryId,
+                    CategoryName = bookData.CategoryName,
+                    PublisherId = bookData.PublisherId,
+                    PublisherName = bookData.PublisherName,
+                    ImageUrl = bookData.ImageUrl,
+                    CreatedAt = bookData.CreatedAt,
+                    UpdatedAt = bookData.UpdatedAt,
+                    Stock = bookData.Stock,
+                    Status = bookData.Status,
+                    Authors = bookData.Authors
+                });
+            }
+
+            var response = new BookListResponse
+            {
+                Books = books,
+                TotalCount = books.Count,
+                PageNumber = 1,
+                PageSize = books.Count,
+                TotalPages = 1
+            };
+
             return new ApiResponse<BookListResponse>
             {
                 Success = true,
-                Message = "Lấy sách mới nhất thành công",
-                Data = new BookListResponse { Books = books, TotalCount = books.Count, PageNumber = 1, PageSize = books.Count, TotalPages = 1 }
+                Message = "Get newest books successfully",
+                Data = response
             };
         }
         catch (Exception ex)
@@ -825,9 +1492,44 @@ public class BookService : IBookService
             return new ApiResponse<BookListResponse>
             {
                 Success = false,
-                Message = "Đã xảy ra lỗi khi lấy sách mới nhất",
+                Message = "Error getting newest books",
                 Errors = new List<string> { ex.Message }
             };
         }
     }
+
+    public async Task<string?> UploadImageToCloudinaryAsync(IFormFile imageFile, string isbn)
+    {
+        try
+        {
+            var cloudinarySettings = _configuration.GetSection("Cloudinary");
+            var cloudName = cloudinarySettings["CloudName"];
+            var apiKey = cloudinarySettings["ApiKey"];
+            var apiSecret = cloudinarySettings["ApiSecret"];
+
+            if (string.IsNullOrEmpty(cloudName) || string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(apiSecret))
+            {
+                return null;
+            }
+
+            var account = new CloudinaryDotNet.Account(cloudName, apiKey, apiSecret);
+            var cloudinary = new Cloudinary(account);
+
+            using var stream = imageFile.OpenReadStream();
+            var uploadParams = new ImageUploadParams()
+            {
+                File = new FileDescription(imageFile.FileName, stream),
+                PublicId = $"bookstore/books/{isbn}",
+                Overwrite = true
+            };
+
+            var uploadResult = await cloudinary.UploadAsync(uploadParams);
+            return uploadResult.SecureUrl?.ToString();
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
 }
+
