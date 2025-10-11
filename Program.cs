@@ -90,6 +90,7 @@ builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<IRoleService, RoleService>();
 builder.Services.AddScoped<IOrderService, OrderService>();
+builder.Services.AddScoped<IInvoiceService, InvoiceService>();
 builder.Services.AddScoped<IPromotionService, PromotionService>();
 builder.Services.AddScoped<IReturnService, ReturnService>();
 builder.Services.AddScoped<IPriceChangeService, PriceChangeService>();

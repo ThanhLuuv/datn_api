@@ -37,9 +37,15 @@ public class OrderLineDto
 public class OrderInvoiceDto
 {
     public long InvoiceId { get; set; }
-    public DateTime CreatedAt { get; set; }
+    public string InvoiceNumber { get; set; } = string.Empty;
     public decimal TotalAmount { get; set; }
     public decimal TaxAmount { get; set; }
+    public string PaymentStatus { get; set; } = string.Empty;
+    public string? PaymentMethod { get; set; }
+    public string? PaymentReference { get; set; }
+    public DateTime? PaidAt { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
 }
 
 public class OrderListResponse

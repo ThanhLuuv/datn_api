@@ -5,6 +5,9 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace BookStore.Api.Controllers;
 
+/// <summary>
+/// API quản lý trả hàng cho ADMIN và EMPLOYEE
+/// </summary>
 [ApiController]
 [Route("api/[controller]")]
 [Authorize(Roles = "ADMIN,EMPLOYEE")]
@@ -17,6 +20,9 @@ public class ReturnController : ControllerBase
         _returnService = returnService;
     }
 
+    /// <summary>
+    /// ADMIN/EMPLOYEE tạo yêu cầu trả hàng cho khách hàng
+    /// </summary>
     [HttpPost]
     public async Task<ActionResult<ApiResponse<ReturnDto>>> CreateReturn([FromBody] CreateReturnDto request)
     {
@@ -31,6 +37,9 @@ public class ReturnController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// ADMIN/EMPLOYEE xem tất cả yêu cầu trả hàng
+    /// </summary>
     [HttpGet]
     public async Task<ActionResult<ApiResponse<ReturnListResponse>>> GetReturns([FromQuery] ReturnSearchRequest request)
     {
@@ -39,6 +48,9 @@ public class ReturnController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// ADMIN/EMPLOYEE xem chi tiết yêu cầu trả hàng
+    /// </summary>
     [HttpGet("{returnId}")]
     public async Task<ActionResult<ApiResponse<ReturnDto>>> GetReturn(long returnId)
     {
@@ -47,6 +59,9 @@ public class ReturnController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// ADMIN/EMPLOYEE cập nhật trạng thái yêu cầu trả hàng
+    /// </summary>
     [HttpPut("{returnId}/status")]
     public async Task<ActionResult<ApiResponse<ReturnDto>>> UpdateReturnStatus(
         long returnId, 
