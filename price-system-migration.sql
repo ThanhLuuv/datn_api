@@ -158,3 +158,4 @@ CALL sp_update_book_average_price('978-605-1-00001');
 -- Migration completed successfully
 SELECT 'Price system migration completed successfully' as status;
 
+
