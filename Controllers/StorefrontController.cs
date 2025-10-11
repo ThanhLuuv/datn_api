@@ -59,7 +59,7 @@ public class StorefrontController : ControllerBase
             .Select(g => new { isbn = g.Key, qty = g.Sum(x => x.Qty) })
             .OrderByDescending(x => x.qty)
             .Take(top)
-            .Join(_db.Books.AsNoTracking(), g => g.isbn, b => b.Isbn, (g, b) => new
+            .Join(_db.Books.AsNoTracking().Where(b => b.Stock > 0 && b.Status == true), g => g.isbn, b => b.Isbn, (g, b) => new
             {
                 b.Isbn,
                 b.Title,
@@ -80,7 +80,7 @@ public class StorefrontController : ControllerBase
 
         var items = await _db.Books
             .AsNoTracking()
-            .Where(b => b.CreatedAt >= since)
+            .Where(b => b.CreatedAt >= since && b.Stock > 0 && b.Status == true)
             .OrderByDescending(b => b.CreatedAt)
             .Take(top)
             .Select(b => new { b.Isbn, b.Title, b.ImageUrl, b.AveragePrice, b.CreatedAt })
@@ -97,19 +97,105 @@ public class StorefrontController : ControllerBase
         if (page <= 0) page = 1;
         if (pageSize <= 0 || pageSize > 100) pageSize = 12;
 
-        var q = _db.Books.AsNoTracking();
+        var q = _db.Books
+            .AsNoTracking()
+            .Include(b => b.Category)
+            .Include(b => b.Publisher)
+            .Include(b => b.AuthorBooks)
+                .ThenInclude(ab => ab.Author)
+            .Include(b => b.BookPromotions)
+                .ThenInclude(bp => bp.Promotion)
+            .Where(b => b.Stock > 0 && b.Status == true);
+
         if (!string.IsNullOrEmpty(normalizedTitle))
         {
+            // Case-insensitive search with LIKE
             q = q.Where(b => EF.Functions.Like(b.Title, "%" + normalizedTitle + "%"));
         }
 
         var total = await q.CountAsync();
-        var items = await q
+        var books = await q
             .OrderBy(b => b.Title)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(b => new { b.Isbn, b.Title, b.ImageUrl, b.AveragePrice })
             .ToListAsync();
+
+        // Get price changes for all books to calculate current prices
+        var bookIsbns = books.Select(b => b.Isbn).ToList();
+        var priceChanges = await _db.PriceChanges
+            .AsNoTracking()
+            .Where(pc => bookIsbns.Contains(pc.Isbn))
+            .GroupBy(pc => pc.Isbn)
+            .ToDictionaryAsync(g => g.Key, g => g.OrderByDescending(pc => pc.ChangedAt).First());
+
+        var items = books.Select(b => {
+            // Calculate current price from PriceChange table
+            var currentPrice = priceChanges.ContainsKey(b.Isbn) ? priceChanges[b.Isbn].NewPrice : b.AveragePrice;
+            
+            // Calculate discounted price
+            var discountedPrice = (decimal?)null;
+            var hasActivePromotion = b.BookPromotions.Any(bp => 
+                bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) && 
+                bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow));
+            
+            if (hasActivePromotion)
+            {
+                var activePromotion = b.BookPromotions
+                    .Where(bp => bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) && 
+                                bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow))
+                    .OrderByDescending(bp => bp.Promotion.DiscountPct)
+                    .FirstOrDefault();
+                
+                if (activePromotion != null)
+                {
+                    discountedPrice = currentPrice * (1 - activePromotion.Promotion.DiscountPct / 100);
+                }
+            }
+
+            return new
+            {
+                b.Isbn,
+                b.Title,
+                b.PageCount,
+                b.AveragePrice,
+                CurrentPrice = currentPrice,
+                DiscountedPrice = discountedPrice,
+                b.PublishYear,
+                CategoryId = b.CategoryId,
+                CategoryName = b.Category?.Name,
+                PublisherId = b.PublisherId,
+                PublisherName = b.Publisher?.Name,
+                b.ImageUrl,
+                b.CreatedAt,
+                b.UpdatedAt,
+                b.Stock,
+                b.Status,
+                Authors = b.AuthorBooks.Select(ab => new
+                {
+                    ab.Author.AuthorId,
+                    ab.Author.FirstName,
+                    ab.Author.LastName,
+                    FullName = ab.Author.FirstName + " " + ab.Author.LastName,
+                    ab.Author.Gender,
+                    ab.Author.DateOfBirth,
+                    ab.Author.Address,
+                    ab.Author.Email
+                }).ToList(),
+                ActivePromotions = b.BookPromotions
+                    .Where(bp => bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) && 
+                                bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow))
+                    .Select(bp => new
+                    {
+                        bp.Promotion.PromotionId,
+                        bp.Promotion.Name,
+                        bp.Promotion.Description,
+                        bp.Promotion.DiscountPct,
+                        bp.Promotion.StartDate,
+                        bp.Promotion.EndDate
+                    }).ToList(),
+                HasPromotion = hasActivePromotion
+            };
+        }).ToList();
 
         return Ok(new { success = true, data = items, pagination = new { page, pageSize, total } });
     }
@@ -134,7 +220,7 @@ public class StorefrontController : ControllerBase
     }
 
     /// <summary>
-    /// Normalizes search term by removing extra whitespaces and trimming
+    /// Normalizes search term by removing extra whitespaces, trimming, and handling Vietnamese characters
     /// </summary>
     /// <param name="searchTerm">The search term to normalize</param>
     /// <returns>Normalized search term</returns>
@@ -143,8 +229,16 @@ public class StorefrontController : ControllerBase
         if (string.IsNullOrWhiteSpace(searchTerm))
             return string.Empty;
 
-        // Remove extra whitespaces (replace multiple spaces with single space)
-        return Regex.Replace(searchTerm.Trim(), @"\s+", " ");
+        // Trim and remove extra whitespaces
+        var normalized = Regex.Replace(searchTerm.Trim(), @"\s+", " ");
+        
+        // Remove special characters except Vietnamese characters and basic punctuation
+        normalized = Regex.Replace(normalized, @"[^\w\sàáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđĐÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ\-\.]", " ");
+        
+        // Remove extra spaces again after removing special characters
+        normalized = Regex.Replace(normalized, @"\s+", " ");
+        
+        return normalized.Trim();
     }
 }
 
