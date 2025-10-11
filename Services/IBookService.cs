@@ -9,7 +9,7 @@ public interface IBookService
 	Task<ApiResponse<BookListResponse>> SearchBooksAsync(BookSearchRequest searchRequest);
 	Task<ApiResponse<BookDto>> GetBookByIsbnAsync(string isbn);
 	Task<ApiResponse<BookListResponse>> GetBooksByPublisherAsync(long publisherId, int pageNumber, int pageSize, string? searchTerm = null);
-	Task<ApiResponse<BookDto>> CreateBookAsync(CreateBookDto createBookDto);
+    Task<ApiResponse<BookDto>> CreateBookAsync(CreateBookDto createBookDto, long? employeeId = null);
 	Task<ApiResponse<BookDto>> UpdateBookAsync(string isbn, UpdateBookDto updateBookDto);
 	Task<ApiResponse<bool>> DeleteBookAsync(string isbn);
 	Task<ApiResponse<bool>> DeactivateBookAsync(string isbn);

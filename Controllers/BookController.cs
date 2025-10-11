@@ -2,6 +2,9 @@ using BookStore.Api.DTOs;
 using BookStore.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
+using Microsoft.EntityFrameworkCore;
+using BookStore.Api.Data;
 
 namespace BookStore.Api.Controllers;
 
@@ -11,10 +14,14 @@ namespace BookStore.Api.Controllers;
 public class BookController : ControllerBase
 {
     private readonly IBookService _bookService;
+    private readonly BookStoreDbContext _context;
+    private readonly ILogger<BookController> _logger;
 
-    public BookController(IBookService bookService)
+    public BookController(IBookService bookService, BookStoreDbContext context, ILogger<BookController> logger)
     {
         _bookService = bookService;
+        _context = context;
+        _logger = logger;
     }
 
     /// <summary>
@@ -146,7 +153,7 @@ public class BookController : ControllerBase
             ImageFile = imageFile
         };
 
-        var result = await _bookService.CreateBookAsync(createBookDto);
+        var result = await _bookService.CreateBookAsync(createBookDto, await GetEmployeeIdFromToken());
         
         if (result.Success)
         {
@@ -166,6 +173,8 @@ public class BookController : ControllerBase
     /// <param name="unitPrice">Giá bán</param>
     /// <param name="publishYear">Năm xuất bản</param>
     /// <param name="pageCount">Số trang</param>
+    /// <param name="stock">Số lượng tồn kho</param>
+    /// <param name="status">Trạng thái sách</param>
     /// <param name="authorIds">Danh sách ID tác giả (comma-separated)</param>
     /// <param name="imageUrl">URL ảnh hiện tại (nếu không upload ảnh mới)</param>
     /// <param name="imageFile">File ảnh mới (nếu có)</param>
@@ -180,7 +189,9 @@ public class BookController : ControllerBase
         [FromForm] decimal unitPrice,
         [FromForm] int publishYear,
         [FromForm] int pageCount,
-        [FromForm] string authorIds,
+        [FromForm] int? stock = null,
+        [FromForm] bool? status = null,
+        [FromForm] string authorIds = "",
         [FromForm] string? imageUrl = null,
         [FromForm] IFormFile? imageFile = null)
     {
@@ -218,6 +229,8 @@ public class BookController : ControllerBase
             InitialPrice = unitPrice,
             PublishYear = publishYear,
             PageCount = pageCount,
+            Stock = stock,
+            Status = status,
             AuthorIds = authorIdList,
             ImageUrl = imageUrl,
             ImageFile = imageFile
@@ -478,6 +491,40 @@ public class BookController : ControllerBase
                 Message = "Đã xảy ra lỗi khi upload ảnh",
                 Errors = new List<string> { ex.Message }
             });
+        }
+    }
+
+    private async Task<long?> GetEmployeeIdFromToken()
+    {
+        try
+        {
+            // Lấy account ID từ token
+            var nameIdentifierClaims = User.Claims.Where(c => c.Type == ClaimTypes.NameIdentifier).ToList();
+            string? accountIdClaim = null;
+            foreach (var claim in nameIdentifierClaims)
+            {
+                if (long.TryParse(claim.Value, out _))
+                {
+                    accountIdClaim = claim.Value;
+                    break;
+                }
+            }
+
+            if (string.IsNullOrEmpty(accountIdClaim) || !long.TryParse(accountIdClaim, out long accountId))
+            {
+                return null;
+            }
+
+            // Tìm employee ID từ account ID
+            var employee = await _context.Employees
+                .FirstOrDefaultAsync(e => e.AccountId == accountId);
+            
+            return employee?.EmployeeId;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting employee ID from token");
+            return null;
         }
     }
 }

@@ -2,6 +2,7 @@ using BookStore.Api.Data;
 using BookStore.Api.DTOs;
 using BookStore.Api.Models;
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 using CloudinaryDotNet;
 using CloudinaryDotNet.Actions;
 
@@ -55,8 +56,14 @@ public class BookService : IBookService
             // Apply search filters
             if (!string.IsNullOrWhiteSpace(searchRequest.SearchTerm))
             {
-                query = query.Where(b => b.Title.Contains(searchRequest.SearchTerm) ||
-                                       b.Isbn.Contains(searchRequest.SearchTerm));
+                var normalizedSearchTerm = NormalizeSearchTerm(searchRequest.SearchTerm);
+                if (!string.IsNullOrEmpty(normalizedSearchTerm))
+                {
+                    query = query.Where(b => 
+                        EF.Functions.Like(b.Title, "%" + normalizedSearchTerm + "%") ||
+                        EF.Functions.Like(b.Isbn, "%" + normalizedSearchTerm + "%")
+                    );
+                }
             }
 
             if (searchRequest.CategoryId.HasValue)
@@ -209,18 +216,21 @@ public class BookService : IBookService
             // Apply search filters
             if (!string.IsNullOrWhiteSpace(searchRequest.SearchTerm))
             {
-                var searchTerm = searchRequest.SearchTerm.ToLower().Trim();
-                query = query.Where(b => 
-                    b.Title.ToLower().Contains(searchTerm) ||
-                    b.Isbn.ToLower().Contains(searchTerm) ||
-                    b.AuthorBooks.Any(ab => 
-                        ab.Author.FirstName.ToLower().Contains(searchTerm) ||
-                        ab.Author.LastName.ToLower().Contains(searchTerm) ||
-                        (ab.Author.FirstName + " " + ab.Author.LastName).ToLower().Contains(searchTerm)
-                    ) ||
-                    b.Category.Name.ToLower().Contains(searchTerm) ||
-                    b.Publisher.Name.ToLower().Contains(searchTerm)
-                );
+                var normalizedSearchTerm = NormalizeSearchTerm(searchRequest.SearchTerm);
+                if (!string.IsNullOrEmpty(normalizedSearchTerm))
+                {
+                    query = query.Where(b => 
+                        EF.Functions.Like(b.Title, "%" + normalizedSearchTerm + "%") ||
+                        EF.Functions.Like(b.Isbn, "%" + normalizedSearchTerm + "%") ||
+                        b.AuthorBooks.Any(ab => 
+                            EF.Functions.Like(ab.Author.FirstName, "%" + normalizedSearchTerm + "%") ||
+                            EF.Functions.Like(ab.Author.LastName, "%" + normalizedSearchTerm + "%") ||
+                            EF.Functions.Like(ab.Author.FirstName + " " + ab.Author.LastName, "%" + normalizedSearchTerm + "%")
+                        ) ||
+                        EF.Functions.Like(b.Category.Name, "%" + normalizedSearchTerm + "%") ||
+                        EF.Functions.Like(b.Publisher.Name, "%" + normalizedSearchTerm + "%")
+                    );
+                }
             }
 
             if (searchRequest.CategoryId.HasValue)
@@ -396,7 +406,7 @@ public class BookService : IBookService
                     .ThenInclude(ab => ab.Author)
                 .Include(b => b.BookPromotions)
                     .ThenInclude(bp => bp.Promotion)
-                .Where(b => b.BookPromotions.Any(bp => 
+                .Where(b => b.Stock > 0 && b.Status == true && b.BookPromotions.Any(bp => 
                     bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) && 
                     bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow)))
                 .OrderByDescending(b => b.BookPromotions.Max(bp => bp.Promotion.DiscountPct))
@@ -506,7 +516,7 @@ public class BookService : IBookService
                     .ThenInclude(ab => ab.Author)
                 .Include(b => b.BookPromotions)
                     .ThenInclude(bp => bp.Promotion)
-                .Where(b => b.OrderLines.Any())
+                .Where(b => b.Stock > 0 && b.Status == true && b.OrderLines.Any())
                 .OrderByDescending(b => b.OrderLines.Sum(ol => ol.Qty))
                 .Take(limit)
                 .Select(b => new
@@ -620,6 +630,7 @@ public class BookService : IBookService
                     .ThenInclude(ab => ab.Author)
                 .Include(b => b.BookPromotions)
                     .ThenInclude(bp => bp.Promotion)
+                .Where(b => b.Stock > 0 && b.Status == true)
                 .OrderByDescending(b => b.CreatedAt)
                 .Take(limit)
                 .Select(b => new
@@ -911,7 +922,7 @@ public class BookService : IBookService
         }
     }
 
-    public async Task<ApiResponse<BookDto>> CreateBookAsync(CreateBookDto createBookDto)
+    public async Task<ApiResponse<BookDto>> CreateBookAsync(CreateBookDto createBookDto, long? employeeId = null)
     {
         try
         {
@@ -1008,7 +1019,7 @@ public class BookService : IBookService
                 OldPrice = 0,
                 NewPrice = createBookDto.InitialPrice,
                 ChangedAt = DateTime.UtcNow,
-                EmployeeId = 1 // Assuming admin employee_id = 1
+                EmployeeId = employeeId ?? 1 // Use provided employeeId or default to 1 (admin)
             };
             _context.PriceChanges.Add(initialPriceChange);
 
@@ -1155,8 +1166,8 @@ public class BookService : IBookService
                 };
             }
 
-            // Handle image upload
-            string? finalImageUrl = updateBookDto.ImageUrl;
+            // Handle image upload - only update if new image is provided
+            string? finalImageUrl = book.ImageUrl; // Keep existing image by default
             if (updateBookDto.ImageFile != null && updateBookDto.ImageFile.Length > 0)
             {
                 var uploadedImageUrl = await UploadImageToCloudinaryAsync(updateBookDto.ImageFile, isbn);
@@ -1174,8 +1185,13 @@ public class BookService : IBookService
                     };
                 }
             }
+            else if (!string.IsNullOrEmpty(updateBookDto.ImageUrl))
+            {
+                // If no file upload but ImageUrl is provided, use the provided URL
+                finalImageUrl = updateBookDto.ImageUrl;
+            }
 
-            // Update book properties
+            // Update book properties - only update if provided
             book.Title = updateBookDto.Title;
             book.PageCount = updateBookDto.PageCount;
             // Note: Price updates should be done through PriceChange table, not directly on Book
@@ -1183,6 +1199,19 @@ public class BookService : IBookService
             book.PublishYear = updateBookDto.PublishYear;
             book.CategoryId = updateBookDto.CategoryId;
             book.PublisherId = updateBookDto.PublisherId;
+            
+            // Only update Stock if provided
+            if (updateBookDto.Stock.HasValue)
+            {
+                book.Stock = updateBookDto.Stock.Value;
+            }
+            
+            // Only update Status if provided
+            if (updateBookDto.Status.HasValue)
+            {
+                book.Status = updateBookDto.Status.Value;
+            }
+            
             book.ImageUrl = finalImageUrl;
             book.UpdatedAt = DateTime.UtcNow;
 
@@ -1530,6 +1559,28 @@ public class BookService : IBookService
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Normalizes search term by removing extra whitespaces, trimming, and handling Vietnamese characters
+    /// </summary>
+    /// <param name="searchTerm">The search term to normalize</param>
+    /// <returns>Normalized search term</returns>
+    private static string NormalizeSearchTerm(string? searchTerm)
+    {
+        if (string.IsNullOrWhiteSpace(searchTerm))
+            return string.Empty;
+
+        // Trim and remove extra whitespaces
+        var normalized = Regex.Replace(searchTerm.Trim(), @"\s+", " ");
+        
+        // Remove special characters except Vietnamese characters and basic punctuation
+        normalized = Regex.Replace(normalized, @"[^\w\sàáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđĐÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ\-\.]", " ");
+        
+        // Remove extra spaces again after removing special characters
+        normalized = Regex.Replace(normalized, @"\s+", " ");
+        
+        return normalized.Trim();
     }
 }
 

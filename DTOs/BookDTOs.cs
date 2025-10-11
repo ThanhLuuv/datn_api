@@ -92,6 +92,11 @@ public class UpdateBookDto
     public IFormFile? ImageFile { get; set; }
 
     public List<long> AuthorIds { get; set; } = new List<long>();
+
+    [Range(0, int.MaxValue, ErrorMessage = "Số lượng tồn kho phải lớn hơn hoặc bằng 0")]
+    public int? Stock { get; set; }
+
+    public bool? Status { get; set; }
 }
 
 public class BookListResponse
