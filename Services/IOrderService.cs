@@ -14,6 +14,7 @@ public interface IOrderService
 	Task<ApiResponse<List<SuggestedEmployeeDto>>> GetDeliveryCandidatesAsync(long orderId);
 	Task<ApiResponse<OrderDto>> CreateOrderAsync(CreateOrderDto createOrderDto, long customerId);
 	Task<Customer?> GetCustomerByAccountIdAsync(long accountId);
+	Task<ApiResponse<InvoiceDto>> GetInvoiceByOrderIdAsync(long orderId);
 }
 
 

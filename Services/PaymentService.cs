@@ -213,7 +213,7 @@ public class PaymentService : IPaymentService
 				txn.RawResponse = payload;
 				txn.UpdatedAt = DateTime.UtcNow;
 				
-				// If payment successful, update order status to Paid and reduce stock
+				// If payment successful, create invoice and reduce stock
 				if (status.ToUpperInvariant() == "PAID")
 				{
 					var order = await _context.Orders
@@ -221,7 +221,23 @@ public class PaymentService : IPaymentService
 						.FirstOrDefaultAsync(o => o.OrderId == txn.OrderId);
 					if (order != null)
 					{
-						order.Status = OrderStatus.Paid; // 0 - Đã thanh toán
+						// Create invoice for paid order (without tax for now)
+						var totalAmount = order.OrderLines.Sum(ol => ol.UnitPrice * ol.Qty);
+						
+						var invoice = new Invoice
+						{
+							OrderId = order.OrderId,
+							InvoiceNumber = $"INV-{order.OrderId:D6}-{DateTime.UtcNow:yyyyMMdd}",
+							TotalAmount = totalAmount,
+							TaxAmount = 0, // No tax for now
+							PaymentStatus = "PAID",
+							PaymentMethod = "PayOS",
+							PaymentReference = txn.ProviderTxnId,
+							PaidAt = DateTime.UtcNow,
+							CreatedAt = DateTime.UtcNow,
+							UpdatedAt = DateTime.UtcNow
+						};
+						_context.Invoices.Add(invoice);
 						
 						// Reduce stock for each book in the order
 						foreach (var orderLine in order.OrderLines)

@@ -9,11 +9,15 @@ public class OrderService : IOrderService
 {
     private readonly BookStoreDbContext _context;
     private readonly IPaymentService _paymentService;
+    private readonly IInvoiceService _invoiceService;
+    private readonly ICartService _cartService;
 
-    public OrderService(BookStoreDbContext context, IPaymentService paymentService)
+    public OrderService(BookStoreDbContext context, IPaymentService paymentService, IInvoiceService invoiceService, ICartService cartService)
     {
         _context = context;
         _paymentService = paymentService;
+        _invoiceService = invoiceService;
+        _cartService = cartService;
     }
 
     public async Task<ApiResponse<OrderListResponse>> GetOrdersAsync(OrderSearchRequest request)
@@ -90,9 +94,15 @@ public class OrderService : IOrderService
                         .Select(i => new OrderInvoiceDto
                         {
                             InvoiceId = i.InvoiceId,
-                            CreatedAt = i.CreatedAt,
+                            InvoiceNumber = i.InvoiceNumber,
                             TotalAmount = i.TotalAmount,
-                            TaxAmount = i.TaxAmount
+                            TaxAmount = i.TaxAmount,
+                            PaymentStatus = i.PaymentStatus,
+                            PaymentMethod = i.PaymentMethod,
+                            PaymentReference = i.PaymentReference,
+                            PaidAt = i.PaidAt,
+                            CreatedAt = i.CreatedAt,
+                            UpdatedAt = i.UpdatedAt
                         })
                         .FirstOrDefault()
                 })
@@ -157,9 +167,15 @@ public class OrderService : IOrderService
                         .Select(i => new OrderInvoiceDto
                         {
                             InvoiceId = i.InvoiceId,
-                            CreatedAt = i.CreatedAt,
+                            InvoiceNumber = i.InvoiceNumber,
                             TotalAmount = i.TotalAmount,
-                            TaxAmount = i.TaxAmount
+                            TaxAmount = i.TaxAmount,
+                            PaymentStatus = i.PaymentStatus,
+                            PaymentMethod = i.PaymentMethod,
+                            PaymentReference = i.PaymentReference,
+                            PaidAt = i.PaidAt,
+                            CreatedAt = i.CreatedAt,
+                            UpdatedAt = i.UpdatedAt
                         })
                         .FirstOrDefault()
                 })
@@ -194,14 +210,21 @@ public class OrderService : IOrderService
                 return new ApiResponse<OrderDto> { Success = false, Message = "Không tìm thấy thông tin nhân viên duyệt" };
             }
 
-            if (order.Status != OrderStatus.Paid)
+            if (order.Status != OrderStatus.PendingConfirmation)
+            {
+                return new ApiResponse<OrderDto> { Success = false, Message = "Đơn hàng chưa được xác nhận, không thể duyệt" };
+            }
+
+            // Kiểm tra thanh toán qua Invoice
+            var hasPaid = await _invoiceService.HasPaidInvoiceAsync(orderId);
+            if (!hasPaid)
             {
                 return new ApiResponse<OrderDto> { Success = false, Message = "Đơn hàng chưa thanh toán, không thể duyệt" };
             }
 
             if (request.Approved)
             {
-                order.Status = OrderStatus.Assigned; // Sau duyệt chuyển sẵn sang trạng thái cần phân công
+                order.Status = OrderStatus.Confirmed; // Sau duyệt chuyển sang trạng thái đã xác nhận
                 order.ApprovedBy = approver.EmployeeId;
             }
             else
@@ -230,7 +253,7 @@ public class OrderService : IOrderService
                 return new ApiResponse<OrderDto> { Success = false, Message = "Không tìm thấy đơn hàng" };
             }
 
-            if (order.Status != OrderStatus.Assigned && order.Status != OrderStatus.Paid)
+            if (order.Status != OrderStatus.PendingConfirmation)
             {
                 return new ApiResponse<OrderDto> { Success = false, Message = "Đơn hàng không ở trạng thái có thể phân công" };
             }
@@ -243,7 +266,7 @@ public class OrderService : IOrderService
 
             order.DeliveredBy = request.DeliveryEmployeeId;
             order.DeliveryDate = request.DeliveryDate;
-            order.Status = OrderStatus.Assigned;
+            order.Status = OrderStatus.Confirmed; // Tự động confirm khi phân công delivery
 
             await _context.SaveChangesAsync();
 
@@ -265,7 +288,7 @@ public class OrderService : IOrderService
                 return new ApiResponse<OrderDto> { Success = false, Message = "Không tìm thấy đơn hàng" };
             }
 
-            if (order.Status != OrderStatus.Assigned)
+            if (order.Status != OrderStatus.Confirmed)
             {
                 return new ApiResponse<OrderDto> { Success = false, Message = "Đơn hàng không ở trạng thái đang giao" };
             }
@@ -322,7 +345,7 @@ public class OrderService : IOrderService
 
             // Đếm đơn hàng đã phân công (status = 1) cho mỗi nhân viên
             var activeAssignedByEmp = await _context.Orders
-                .Where(o => o.Status == OrderStatus.Assigned && o.DeliveredBy != null)
+                .Where(o => o.Status == OrderStatus.Confirmed && o.DeliveredBy != null)
                 .GroupBy(o => o.DeliveredBy!.Value)
                 .Select(g => new { EmployeeId = g.Key, Count = g.Count() })
                 .ToDictionaryAsync(x => x.EmployeeId, x => x.Count);
@@ -458,7 +481,7 @@ public class OrderService : IOrderService
                 ReceiverName = createOrderDto.ReceiverName,
                 ReceiverPhone = createOrderDto.ReceiverPhone,
                 ShippingAddress = createOrderDto.ShippingAddress,
-                Status = OrderStatus.PendingPayment // 3 - Chờ thanh toán
+                Status = OrderStatus.PendingConfirmation // 0 - Chờ xác nhận
             };
 
             _context.Orders.Add(order);
@@ -524,6 +547,18 @@ public class OrderService : IOrderService
                 };
             }
 
+            // Clear cart after successful order creation
+            try
+            {
+                await _cartService.ClearCartAsync(customer.CustomerId);
+            }
+            catch (Exception ex)
+            {
+                // Log error but don't fail the order creation
+                // Cart clearing is not critical for order success
+                Console.WriteLine($"Warning: Failed to clear cart for customer {customer.CustomerId}: {ex.Message}");
+            }
+
             // Return the created order with payment info
             var orderResult = await GetOrderByIdAsync(order.OrderId);
             if (orderResult.Success && orderResult.Data != null)
@@ -569,5 +604,54 @@ public class OrderService : IOrderService
     {
         return await _context.Customers
             .FirstOrDefaultAsync(c => c.AccountId == accountId);
+    }
+
+    public async Task<ApiResponse<InvoiceDto>> GetInvoiceByOrderIdAsync(long orderId)
+    {
+        try
+        {
+            var invoice = await _context.Invoices
+                .FirstOrDefaultAsync(i => i.OrderId == orderId);
+
+            if (invoice == null)
+            {
+                return new ApiResponse<InvoiceDto>
+                {
+                    Success = false,
+                    Message = "Không tìm thấy hóa đơn"
+                };
+            }
+
+            var invoiceDto = new InvoiceDto
+            {
+                InvoiceId = invoice.InvoiceId,
+                OrderId = invoice.OrderId,
+                InvoiceNumber = invoice.InvoiceNumber,
+                TotalAmount = invoice.TotalAmount,
+                TaxAmount = invoice.TaxAmount,
+                PaymentStatus = invoice.PaymentStatus,
+                PaymentMethod = invoice.PaymentMethod,
+                PaymentReference = invoice.PaymentReference,
+                PaidAt = invoice.PaidAt,
+                CreatedAt = invoice.CreatedAt,
+                UpdatedAt = invoice.UpdatedAt
+            };
+
+            return new ApiResponse<InvoiceDto>
+            {
+                Success = true,
+                Message = "Lấy thông tin hóa đơn thành công",
+                Data = invoiceDto
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<InvoiceDto>
+            {
+                Success = false,
+                Message = "Lỗi khi lấy thông tin hóa đơn",
+                Errors = new List<string> { ex.Message }
+            };
+        }
     }
 }
