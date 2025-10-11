@@ -5,7 +5,6 @@ using BookStore.Api.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using BookStore.Api.Models;
-
 namespace BookStore.Api.Controllers;
 
 [ApiController]
@@ -93,14 +92,14 @@ public class StorefrontController : ControllerBase
     [HttpGet("search")]
     public async Task<IActionResult> SearchByTitle([FromQuery] string title = "", [FromQuery] int page = 1, [FromQuery] int pageSize = 12)
     {
-        title = title?.Trim() ?? string.Empty;
+        var normalizedTitle = NormalizeSearchTerm(title);
         if (page <= 0) page = 1;
         if (pageSize <= 0 || pageSize > 100) pageSize = 12;
 
         var q = _db.Books.AsNoTracking();
-        if (!string.IsNullOrEmpty(title))
+        if (!string.IsNullOrEmpty(normalizedTitle))
         {
-            q = q.Where(b => EF.Functions.Like(b.Title, "%" + title + "%"));
+            q = q.Where(b => EF.Functions.Like(b.Title, "%" + normalizedTitle + "%"));
         }
 
         var total = await q.CountAsync();
@@ -127,10 +126,24 @@ public class StorefrontController : ControllerBase
             .Where(pc => pc.Isbn == isbn)
             .OrderByDescending(pc => pc.ChangedAt)
             .Take(limit)
-            .Select(pc => new { pc.Isbn, pc.OldPrice, pc.NewPrice, pc.ChangedAt, pc.EmployeeId })
+            .Select(pc => new { pc.Isbn, pc.OldPrice, pc.NewPrice, pc.ChangedAt,                         pc.EmployeeId })
             .ToListAsync();
 
         return Ok(new { success = true, data = history });
+    }
+
+    /// <summary>
+    /// Normalizes search term by removing extra whitespaces and trimming
+    /// </summary>
+    /// <param name="searchTerm">The search term to normalize</param>
+    /// <returns>Normalized search term</returns>
+    private static string NormalizeSearchTerm(string? searchTerm)
+    {
+        if (string.IsNullOrWhiteSpace(searchTerm))
+            return string.Empty;
+
+        // Remove extra whitespaces (replace multiple spaces with single space)
+        return Regex.Replace(searchTerm.Trim(), @"\s+", " ");
     }
 }
 
