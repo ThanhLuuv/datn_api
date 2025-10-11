@@ -41,20 +41,6 @@ public class BookService : IBookService
         return book;
     }
 
-    /// <summary>
-    /// Normalizes search term by removing extra whitespaces and trimming
-    /// </summary>
-    /// <param name="searchTerm">The search term to normalize</param>
-    /// <returns>Normalized search term</returns>
-    private static string NormalizeSearchTerm(string? searchTerm)
-    {
-        if (string.IsNullOrWhiteSpace(searchTerm))
-            return string.Empty;
-
-        // Remove extra whitespaces (replace multiple spaces with single space)
-        return Regex.Replace(searchTerm.Trim(), @"\s+", " ");
-    }
-
     public async Task<ApiResponse<BookListResponse>> GetBooksAsync(BookSearchRequest searchRequest)
     {
         try
@@ -69,12 +55,8 @@ public class BookService : IBookService
             // Apply search filters
             if (!string.IsNullOrWhiteSpace(searchRequest.SearchTerm))
             {
-                var normalizedSearchTerm = NormalizeSearchTerm(searchRequest.SearchTerm);
-                if (!string.IsNullOrWhiteSpace(normalizedSearchTerm))
-                {
-                    query = query.Where(b => b.Title.Contains(normalizedSearchTerm) ||
-                                           b.Isbn.Contains(normalizedSearchTerm));
-                }
+                query = query.Where(b => b.Title.Contains(searchRequest.SearchTerm) ||
+                                       b.Isbn.Contains(searchRequest.SearchTerm));
             }
 
             if (searchRequest.CategoryId.HasValue)
