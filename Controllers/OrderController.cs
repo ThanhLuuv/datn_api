@@ -67,6 +67,24 @@ public class OrderController : ControllerBase
         return Ok(result);
     }
 
+    [HttpGet("my-assigned-orders")]
+    [Authorize(Roles = "DELIVERY_EMPLOYEE")]
+    public async Task<ActionResult<ApiResponse<OrderListResponse>>> GetMyAssignedOrders([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 10)
+    {
+        var email = User.FindFirst(ClaimTypes.Email)?.Value ?? User.FindFirst("email")?.Value ?? User.FindFirst("sub")?.Value;
+        if (string.IsNullOrEmpty(email)) return Unauthorized(new ApiResponse<OrderListResponse> { Success = false, Message = "Không thể xác định người dùng" });
+
+        // Map email -> employeeId
+        var employeeId = await _orderService.GetEmployeeIdByEmailAsync(email);
+        if (employeeId == null)
+        {
+            return Forbid();
+        }
+
+        var result = await _orderService.GetMyAssignedOrdersAsync(employeeId.Value, pageNumber, pageSize);
+        return Ok(result);
+    }
+
     [HttpGet("{orderId}")]
     [Authorize(Roles = "ADMIN,EMPLOYEE,DELIVERY_EMPLOYEE")] 
     public async Task<ActionResult<ApiResponse<OrderDto>>> GetOrder(long orderId)

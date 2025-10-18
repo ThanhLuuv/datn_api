@@ -41,6 +41,27 @@ public class ReportController : ControllerBase
     }
 
     /// <summary>
+    /// Báo cáo tồn kho tại ngày (ADMIN)
+    /// </summary>
+    [HttpGet("inventory")]
+    public async Task<ActionResult<ApiResponse<InventoryReportResponse>>> GetInventory([FromQuery] DateTime date)
+    {
+        var result = await _reportService.GetInventoryAsOfDateAsync(date);
+        if (result.Success) return Ok(result);
+        return BadRequest(result);
+    }
+
+    /// <summary>
+    /// Tính lại giá nhập bình quân theo 4 phiếu nhập gần nhất (ADMIN)
+    /// </summary>
+    [HttpPost("books/{isbn}/recompute-average-price")]
+    public async Task<ActionResult<ApiResponse<RecomputeAveragePriceResponse>>> RecomputeAveragePrice(string isbn)
+    {
+        var result = await _reportService.RecomputeAveragePriceAsync(isbn);
+        if (result.Success) return Ok(result);
+        return BadRequest(result);
+    }
+    /// <summary>
     /// Báo cáo doanh thu theo quý trong khoảng thời gian
     /// </summary>
     [HttpGet("revenue-quarterly")]

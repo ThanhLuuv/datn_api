@@ -30,6 +30,18 @@ public class InvoiceController : ControllerBase
     }
 
     /// <summary>
+    /// Lấy danh sách hóa đơn kèm thông tin đơn hàng
+    /// </summary>
+    [HttpGet("with-orders")]
+    [Authorize(Roles = "ADMIN,EMPLOYEE")]
+    public async Task<ActionResult<ApiResponse<InvoiceWithOrderListResponse>>> GetInvoicesWithOrders([FromQuery] InvoiceSearchRequest request)
+    {
+        var result = await _invoiceService.GetInvoicesWithOrdersAsync(request);
+        if (result.Success) return Ok(result);
+        return BadRequest(result);
+    }
+
+    /// <summary>
     /// Lấy hóa đơn theo ID
     /// </summary>
     [HttpGet("{invoiceId}")]
