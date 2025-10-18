@@ -2,6 +2,7 @@ using BookStore.Api.Data;
 using BookStore.Api.DTOs;
 using BookStore.Api.Models;
 using Microsoft.EntityFrameworkCore;
+using System.Data.Common;
 
 namespace BookStore.Api.Services;
 
@@ -19,19 +20,34 @@ public class ReportService : IReportService
         try
         {
             var dateStr = reportDate.ToString("yyyy-MM-dd");
-            // Execute stored procedure and map to DTOs
-            var rows = await _context.Set<InventoryReportRow>()
-                .FromSqlRaw("CALL SP_InventoryReport_AsOfDate({0})", dateStr)
-                .ToListAsync();
-
-            var items = rows.Select(r => new InventoryReportItem
+            
+            // Execute stored procedure using raw SQL and map manually
+            var connection = _context.Database.GetDbConnection();
+            await connection.OpenAsync();
+            
+            using var command = connection.CreateCommand();
+            command.CommandText = "CALL SP_InventoryReport_AsOfDate(@reportDate)";
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = "@reportDate";
+            parameter.Value = dateStr;
+            command.Parameters.Add(parameter);
+            
+            var items = new List<InventoryReportItem>();
+            using var reader = await command.ExecuteReaderAsync();
+            
+            while (await reader.ReadAsync())
             {
-                Category = r.Category,
-                Isbn = r.Isbn,
-                Title = r.Title,
-                QuantityOnHand = r.QuantityOnHand,
-                AveragePrice = r.AveragePrice
-            }).ToList();
+                items.Add(new InventoryReportItem
+                {
+                    Category = reader.GetString(0),
+                    Isbn = reader.GetString(1),
+                    Title = reader.GetString(2),
+                    QuantityOnHand = reader.GetInt32(3),
+                    AveragePrice = reader.GetDecimal(4)
+                });
+            }
+            
+            await connection.CloseAsync();
 
             return new ApiResponse<InventoryReportResponse>
             {

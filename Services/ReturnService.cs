@@ -8,10 +8,12 @@ namespace BookStore.Api.Services;
 public class ReturnService : IReturnService
 {
     private readonly BookStoreDbContext _context;
+    private readonly IExpenseService _expenseService;
 
-    public ReturnService(BookStoreDbContext context)
+    public ReturnService(BookStoreDbContext context, IExpenseService expenseService)
     {
         _context = context;
+        _expenseService = expenseService;
     }
 
     public async Task<ApiResponse<ReturnDto>> CreateReturnAsync(CreateReturnDto request)
@@ -28,19 +30,19 @@ public class ReturnService : IReturnService
                 return new ApiResponse<ReturnDto> { Success = false, Message = "Không tìm thấy hóa đơn" };
             }
 
-            // Index order lines by id
-            var idToLine = invoice.Order.OrderLines.ToDictionary(ol => ol.OrderLineId);
+            // Index order lines by ISBN instead of OrderLineId
+            var isbnToLine = invoice.Order.OrderLines.ToDictionary(ol => ol.Isbn);
 
             // Validate lines
             foreach (var line in request.Lines)
             {
-                if (!idToLine.TryGetValue(line.OrderLineId, out var ol))
+                if (!isbnToLine.TryGetValue(line.Isbn, out var ol))
                 {
-                    return new ApiResponse<ReturnDto> { Success = false, Message = $"Dòng đơn hàng không tồn tại: {line.OrderLineId}" };
+                    return new ApiResponse<ReturnDto> { Success = false, Message = $"Sách không tồn tại trong đơn hàng: {line.Isbn}" };
                 }
                 if (line.QtyReturned <= 0 || line.QtyReturned > ol.Qty)
                 {
-                    return new ApiResponse<ReturnDto> { Success = false, Message = $"Số lượng trả không hợp lệ cho dòng {line.OrderLineId}" };
+                    return new ApiResponse<ReturnDto> { Success = false, Message = $"Số lượng trả không hợp lệ cho sách {line.Isbn}" };
                 }
             }
 
@@ -49,16 +51,20 @@ public class ReturnService : IReturnService
                 InvoiceId = invoice.InvoiceId,
                 CreatedAt = DateTime.UtcNow,
                 Reason = request.Reason,
-                Status = ReturnStatus.Pending
+                Status = ReturnStatus.Pending,
+                ApplyDeduction = request.ApplyDeduction,
+                DeductionPercent = request.DeductionPercent
             };
             _context.Returns.Add(ret);
             await _context.SaveChangesAsync();
 
             var retLines = new List<ReturnLine>();
+            var totalAmount = 0m;
             foreach (var line in request.Lines)
             {
-                var ol = idToLine[line.OrderLineId];
-                var amount = line.QtyReturned * ol.UnitPrice;
+                var ol = isbnToLine[line.Isbn];
+                var amount = line.QtyReturned * ol.UnitPrice; // Use UnitPrice from request
+                totalAmount += amount;
                 retLines.Add(new ReturnLine
                 {
                     ReturnId = ret.ReturnId,
@@ -68,6 +74,18 @@ public class ReturnService : IReturnService
                 });
             }
             _context.ReturnLines.AddRange(retLines);
+
+            // Calculate deduction and final amount
+            var deductionAmount = 0m;
+            var finalAmount = totalAmount;
+            if (request.ApplyDeduction && request.DeductionPercent > 0)
+            {
+                deductionAmount = totalAmount * (request.DeductionPercent / 100);
+                finalAmount = totalAmount - deductionAmount;
+            }
+
+            ret.DeductionAmount = deductionAmount;
+            ret.FinalAmount = finalAmount;
             await _context.SaveChangesAsync();
 
             var dto = new ReturnDto
@@ -81,16 +99,20 @@ public class ReturnService : IReturnService
                 ProcessedBy = ret.ProcessedBy,
                 ProcessedAt = ret.ProcessedAt,
                 Notes = ret.Notes,
-                TotalAmount = retLines.Sum(x => x.Amount),
+                TotalAmount = totalAmount,
+                ApplyDeduction = ret.ApplyDeduction,
+                DeductionPercent = ret.DeductionPercent,
+                DeductionAmount = ret.DeductionAmount,
+                FinalAmount = ret.FinalAmount,
                 Lines = retLines.Select(x => new ReturnLineDto
                 {
                     ReturnLineId = x.ReturnLineId,
                     OrderLineId = x.OrderLineId,
                     QtyReturned = x.QtyReturned,
                     Amount = x.Amount,
-                    Isbn = idToLine[x.OrderLineId].Isbn,
-                    BookTitle = idToLine[x.OrderLineId].Book.Title,
-                    UnitPrice = idToLine[x.OrderLineId].UnitPrice
+                    Isbn = isbnToLine.Values.First(ol => ol.OrderLineId == x.OrderLineId).Isbn,
+                    BookTitle = isbnToLine.Values.First(ol => ol.OrderLineId == x.OrderLineId).Book.Title,
+                    UnitPrice = isbnToLine.Values.First(ol => ol.OrderLineId == x.OrderLineId).UnitPrice
                 }).ToList(),
                 Order = new ReturnOrderDto
                 {
@@ -229,6 +251,10 @@ public class ReturnService : IReturnService
                 ProcessedAt = ret.ProcessedAt,
                 Notes = ret.Notes,
                 TotalAmount = ret.ReturnLines.Sum(rl => rl.Amount),
+                ApplyDeduction = ret.ApplyDeduction,
+                DeductionPercent = ret.DeductionPercent,
+                DeductionAmount = ret.DeductionAmount,
+                FinalAmount = ret.FinalAmount,
                 Lines = ret.ReturnLines.Select(rl => new ReturnLineDto
                 {
                     ReturnLineId = rl.ReturnLineId,
@@ -287,6 +313,48 @@ public class ReturnService : IReturnService
             ret.Notes = request.Notes;
 
             await _context.SaveChangesAsync();
+
+            // Nếu phiếu trả được duyệt (Approved), tạo phiếu chi hoàn tiền
+            if (request.Status == ReturnStatus.Approved)
+            {
+                try
+                {
+                    // Sử dụng FinalAmount (đã trừ khấu trừ) thay vì tổng tiền gốc
+                    var refundAmount = ret.FinalAmount;
+
+                    Console.WriteLine($"=== TẠO PHIẾU CHI HOÀN TIỀN ===");
+                    Console.WriteLine($"Return ID: {returnId}");
+                    Console.WriteLine($"Refund Amount: {refundAmount}");
+                    Console.WriteLine($"Employee ID: {employee.EmployeeId}");
+
+                    if (refundAmount > 0)
+                    {
+                        var expenseResult = await _expenseService.CreateReturnRefundVoucherAsync(returnId, refundAmount, employee.EmployeeId);
+                        if (expenseResult.Success)
+                        {
+                            Console.WriteLine($"✅ Tạo phiếu chi thành công: {expenseResult.Data?.VoucherNumber}");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"❌ Lỗi tạo phiếu chi: {expenseResult.Message}");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"⚠️ Số tiền hoàn = 0, không tạo phiếu chi");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Log lỗi nhưng không làm fail việc cập nhật phiếu trả
+                    Console.WriteLine($"❌ Lỗi khi tạo phiếu chi hoàn tiền: {ex.Message}");
+                    Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                }
+            }
+            else
+            {
+                Console.WriteLine($"⚠️ Trạng thái không phải Approved ({request.Status}), không tạo phiếu chi");
+            }
 
             // Trả về dữ liệu cập nhật
             return await GetReturnByIdAsync(returnId);

@@ -30,7 +30,7 @@ public class InvoiceController : ControllerBase
     }
 
     /// <summary>
-    /// Lấy danh sách hóa đơn kèm thông tin đơn hàng
+    /// Lấy danh sách hóa đơn chưa có phiếu trả kèm thông tin đơn hàng
     /// </summary>
     [HttpGet("with-orders")]
     [Authorize(Roles = "ADMIN,EMPLOYEE")]

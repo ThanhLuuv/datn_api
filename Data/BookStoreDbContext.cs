@@ -42,6 +42,10 @@ public class BookStoreDbContext : DbContext
     public DbSet<Return> Returns { get; set; }
     public DbSet<ReturnLine> ReturnLines { get; set; }
 
+    // Expense management
+    public DbSet<ExpenseVoucher> ExpenseVouchers { get; set; }
+    public DbSet<ExpenseVoucherLine> ExpenseVoucherLines { get; set; }
+
     // Purchase management
     public DbSet<PurchaseOrder> PurchaseOrders { get; set; }
     public DbSet<PurchaseOrderLine> PurchaseOrderLines { get; set; }

@@ -95,6 +95,7 @@ builder.Services.AddScoped<IPromotionService, PromotionService>();
 builder.Services.AddScoped<IReturnService, ReturnService>();
 builder.Services.AddScoped<IPriceChangeService, PriceChangeService>();
 builder.Services.AddScoped<ICartService, CartService>();
+builder.Services.AddScoped<IExpenseService, ExpenseService>();
 
 // Health Checks
 builder.Services.AddHealthChecks()

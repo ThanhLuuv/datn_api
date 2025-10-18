@@ -160,6 +160,9 @@ public class InvoiceService : IInvoiceService
                 .Include(i => i.Order)
                 .AsQueryable();
 
+            // Chỉ lấy hóa đơn chưa có phiếu trả
+            query = query.Where(i => !_context.Returns.Any(r => r.InvoiceId == i.InvoiceId));
+
             if (request.OrderId.HasValue)
             {
                 query = query.Where(i => i.OrderId == request.OrderId.Value);
@@ -220,7 +223,7 @@ public class InvoiceService : IInvoiceService
             return new ApiResponse<InvoiceWithOrderListResponse>
             {
                 Success = true,
-                Message = "Lấy danh sách hóa đơn kèm đơn hàng thành công",
+                Message = "Lấy danh sách hóa đơn chưa có phiếu trả thành công",
                 Data = response
             };
         }
