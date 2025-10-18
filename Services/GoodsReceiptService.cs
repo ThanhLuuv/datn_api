@@ -284,6 +284,7 @@ public class GoodsReceiptService : IGoodsReceiptService
 
             // Add goods receipt lines and update stock by ordered lines order
             var poLines = purchaseOrder.PurchaseOrderLines.OrderBy(l => l.PoLineId).ToList();
+            var affectedIsbns = new HashSet<string>();
             for (int i = 0; i < createGoodsReceiptDto.Lines.Count && i < poLines.Count; i++)
             {
                 var lineDto = createGoodsReceiptDto.Lines[i];
@@ -299,6 +300,7 @@ public class GoodsReceiptService : IGoodsReceiptService
                 // Update book stock
                 var book = poLine.Book;
                 book.Stock += lineDto.QtyReceived;
+                affectedIsbns.Add(poLine.Isbn);
             }
             await _context.SaveChangesAsync();
 
@@ -348,6 +350,12 @@ public class GoodsReceiptService : IGoodsReceiptService
                 var poLine = createdPurchaseOrderLines[i];
                 line.Isbn = poLine.Isbn;
                 line.BookTitle = poLine.Book.Title;
+            }
+
+            // Recompute average price for affected ISBNs (after stock and receipts saved)
+            foreach (var isbn in affectedIsbns)
+            {
+                await _context.Database.ExecuteSqlRawAsync("CALL SP_UpdateAveragePrice_Last4Receipts({0})", isbn);
             }
 
             return new ApiResponse<GoodsReceiptDto>
@@ -419,6 +427,7 @@ public class GoodsReceiptService : IGoodsReceiptService
                 .Where(pl => pl.PoId == poId)
                 .OrderBy(pl => pl.PoLineId)
                 .ToListAsync();
+            var affectedIsbns2 = new HashSet<string>(poLines.Select(pl => pl.Isbn));
 
             // Rollback previous receipt quantities from stock
             var oldLines = await _context.GoodsReceiptLines.Where(l => l.GrId == grId).ToListAsync();
@@ -496,6 +505,12 @@ public class GoodsReceiptService : IGoodsReceiptService
                 var poLine = updatedPurchaseOrderLines[i];
                 line.Isbn = poLine.Isbn;
                 line.BookTitle = poLine.Book.Title;
+            }
+
+            // Recompute average price for affected ISBNs after update
+            foreach (var isbn in affectedIsbns2)
+            {
+                await _context.Database.ExecuteSqlRawAsync("CALL SP_UpdateAveragePrice_Last4Receipts({0})", isbn);
             }
 
             return new ApiResponse<GoodsReceiptDto>

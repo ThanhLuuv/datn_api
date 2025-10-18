@@ -167,10 +167,10 @@ public class PromotionService : IPromotionService
     {
         try
         {
-            // Validate dates
-            if (createPromotionDto.EndDate <= createPromotionDto.StartDate)
+            // Validate dates (allow same-day promotion: EndDate can equal StartDate)
+            if (createPromotionDto.EndDate < createPromotionDto.StartDate)
             {
-                return new ApiResponse<PromotionDto> { Success = false, Message = "Ngày kết thúc phải sau ngày bắt đầu" };
+                return new ApiResponse<PromotionDto> { Success = false, Message = "Ngày kết thúc không được trước ngày bắt đầu" };
             }
 
             if (createPromotionDto.StartDate < DateOnly.FromDateTime(DateTime.Today))
@@ -206,6 +206,29 @@ public class PromotionService : IPromotionService
             {
                 var missingIsbns = createPromotionDto.BookIsbns.Except(books.Select(b => b.Isbn)).ToList();
                 return new ApiResponse<PromotionDto> { Success = false, Message = $"Không tìm thấy sách với ISBN: {string.Join(", ", missingIsbns)}" };
+            }
+
+            // Validate no time overlap with existing promotions for the selected books
+            // Rule: New promotion must NOT overlap any existing promotion of any selected book
+            // Overlap check remains inclusive on both ends; same-day ranges are allowed if they don't overlap.
+            var overlappingPromotions = await _context.Promotions
+                .Where(p => p.BookPromotions.Any(bp => createPromotionDto.BookIsbns.Contains(bp.Isbn))
+                            && p.StartDate <= createPromotionDto.EndDate
+                            && p.EndDate >= createPromotionDto.StartDate)
+                .Select(p => new { p.PromotionId, p.Name, p.StartDate, p.EndDate })
+                .ToListAsync();
+
+            if (overlappingPromotions.Any())
+            {
+                var conflicts = string.Join(", ", overlappingPromotions
+                    .Select(p => $"[{p.PromotionId}] {p.Name} ({p.StartDate:yyyy-MM-dd} -> {p.EndDate:yyyy-MM-dd})"));
+
+                return new ApiResponse<PromotionDto>
+                {
+                    Success = false,
+                    Message = "Khuyến mãi mới không được trùng thời gian với khuyến mãi hiện có. Vui lòng điều chỉnh khoảng thời gian để không bị chồng lấp.",
+                    Errors = new List<string> { $"Xung đột với: {conflicts}" }
+                };
             }
 
             // Create promotion

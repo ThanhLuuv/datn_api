@@ -11,6 +11,7 @@ public interface IInvoiceService
     Task<ApiResponse<InvoiceListResponse>> GetInvoicesAsync(InvoiceSearchRequest request);
     Task<ApiResponse<InvoiceDto>> GetInvoiceByOrderIdAsync(long orderId);
     Task<bool> HasPaidInvoiceAsync(long orderId);
+    Task<ApiResponse<InvoiceWithOrderListResponse>> GetInvoicesWithOrdersAsync(InvoiceSearchRequest request);
 }
 
 public class InvoiceService : IInvoiceService
@@ -88,6 +89,11 @@ public class InvoiceService : IInvoiceService
                 query = query.Where(i => i.PaymentStatus == request.PaymentStatus);
             }
 
+            if (!string.IsNullOrWhiteSpace(request.InvoiceNumber))
+            {
+                query = query.Where(i => i.InvoiceNumber.Contains(request.InvoiceNumber));
+            }
+
             if (request.FromDate.HasValue)
             {
                 query = query.Where(i => i.CreatedAt >= request.FromDate.Value);
@@ -141,6 +147,89 @@ public class InvoiceService : IInvoiceService
             {
                 Success = false,
                 Message = "Lỗi khi lấy danh sách hóa đơn",
+                Errors = new List<string> { ex.Message }
+            };
+        }
+    }
+
+    public async Task<ApiResponse<InvoiceWithOrderListResponse>> GetInvoicesWithOrdersAsync(InvoiceSearchRequest request)
+    {
+        try
+        {
+            var query = _context.Invoices
+                .Include(i => i.Order)
+                .AsQueryable();
+
+            if (request.OrderId.HasValue)
+            {
+                query = query.Where(i => i.OrderId == request.OrderId.Value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.PaymentStatus))
+            {
+                query = query.Where(i => i.PaymentStatus == request.PaymentStatus);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.InvoiceNumber))
+            {
+                query = query.Where(i => i.InvoiceNumber.Contains(request.InvoiceNumber));
+            }
+
+            if (request.FromDate.HasValue)
+            {
+                query = query.Where(i => i.CreatedAt >= request.FromDate.Value);
+            }
+
+            if (request.ToDate.HasValue)
+            {
+                query = query.Where(i => i.CreatedAt <= request.ToDate.Value);
+            }
+
+            var totalCount = await query.CountAsync();
+
+            var items = await query
+                .OrderByDescending(i => i.CreatedAt)
+                .Skip((request.PageNumber - 1) * request.PageSize)
+                .Take(request.PageSize)
+                .Select(i => new InvoiceWithOrderDto
+                {
+                    InvoiceId = i.InvoiceId,
+                    InvoiceNumber = i.InvoiceNumber,
+                    TotalAmount = i.TotalAmount,
+                    TaxAmount = i.TaxAmount,
+                    PaymentStatus = i.PaymentStatus,
+                    CreatedAt = i.CreatedAt,
+                    OrderId = i.OrderId,
+                    PlacedAt = i.Order.PlacedAt,
+                    ReceiverName = i.Order.ReceiverName,
+                    ReceiverPhone = i.Order.ReceiverPhone,
+                    ShippingAddress = i.Order.ShippingAddress,
+                    OrderStatus = i.Order.Status.ToString()
+                })
+                .ToListAsync();
+
+            var response = new InvoiceWithOrderListResponse
+            {
+                Invoices = items,
+                TotalCount = totalCount,
+                PageNumber = request.PageNumber,
+                PageSize = request.PageSize,
+                TotalPages = (int)Math.Ceiling((double)totalCount / request.PageSize)
+            };
+
+            return new ApiResponse<InvoiceWithOrderListResponse>
+            {
+                Success = true,
+                Message = "Lấy danh sách hóa đơn kèm đơn hàng thành công",
+                Data = response
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<InvoiceWithOrderListResponse>
+            {
+                Success = false,
+                Message = "Lỗi khi lấy danh sách hóa đơn kèm đơn hàng",
                 Errors = new List<string> { ex.Message }
             };
         }

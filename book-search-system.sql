@@ -124,6 +124,7 @@ BEGIN
     INNER JOIN order_line ol ON b.isbn = ol.isbn
     INNER JOIN `order` o ON ol.order_id = o.order_id
     WHERE o.status = 2 -- Delivered
+      AND o.placed_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
     GROUP BY b.isbn, b.title, b.page_count, b.average_price, pc.new_price, 
              b.publish_year, b.category_id, c.name, b.publisher_id, p.name, 
              b.image_url, b.created_at, b.updated_at, b.stock, b.status

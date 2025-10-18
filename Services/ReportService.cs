@@ -14,6 +14,80 @@ public class ReportService : IReportService
 		_context = context;
 	}
 
+    public async Task<ApiResponse<InventoryReportResponse>> GetInventoryAsOfDateAsync(DateTime reportDate)
+    {
+        try
+        {
+            var dateStr = reportDate.ToString("yyyy-MM-dd");
+            // Execute stored procedure and map to DTOs
+            var rows = await _context.Set<InventoryReportRow>()
+                .FromSqlRaw("CALL SP_InventoryReport_AsOfDate({0})", dateStr)
+                .ToListAsync();
+
+            var items = rows.Select(r => new InventoryReportItem
+            {
+                Category = r.Category,
+                Isbn = r.Isbn,
+                Title = r.Title,
+                QuantityOnHand = r.QuantityOnHand,
+                AveragePrice = r.AveragePrice
+            }).ToList();
+
+            return new ApiResponse<InventoryReportResponse>
+            {
+                Success = true,
+                Message = "Lấy báo cáo tồn kho theo ngày thành công",
+                Data = new InventoryReportResponse { ReportDate = reportDate.Date, Items = items }
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<InventoryReportResponse>
+            {
+                Success = false,
+                Message = "Lỗi khi lấy báo cáo tồn kho",
+                Errors = new List<string> { ex.Message }
+            };
+        }
+    }
+
+    public async Task<ApiResponse<RecomputeAveragePriceResponse>> RecomputeAveragePriceAsync(string isbn)
+    {
+        try
+        {
+            // Call SP to recompute (no result mapping expected)
+            await _context.Database.ExecuteSqlRawAsync("CALL SP_UpdateAveragePrice_Last4Receipts({0})", isbn);
+
+            // SP returns a scalar; fetch updated book value instead
+            var book = await _context.Books.AsNoTracking().FirstOrDefaultAsync(b => b.Isbn == isbn);
+            if (book == null)
+            {
+                return new ApiResponse<RecomputeAveragePriceResponse>
+                {
+                    Success = false,
+                    Message = "Không tìm thấy sách",
+                    Errors = new List<string> { "ISBN không tồn tại" }
+                };
+            }
+
+            return new ApiResponse<RecomputeAveragePriceResponse>
+            {
+                Success = true,
+                Message = "Cập nhật giá nhập bình quân thành công",
+                Data = new RecomputeAveragePriceResponse { Isbn = isbn, AveragePrice = book.AveragePrice }
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<RecomputeAveragePriceResponse>
+            {
+                Success = false,
+                Message = "Lỗi khi cập nhật giá nhập bình quân",
+                Errors = new List<string> { ex.Message }
+            };
+        }
+    }
+
         public async Task<ApiResponse<MonthlyRevenueReportResponse>> GetMonthlyRevenueAsync(DateTime fromDate, DateTime toDate)
         {
             try

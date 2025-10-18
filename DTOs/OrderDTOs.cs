@@ -32,6 +32,7 @@ public class OrderLineDto
     public int Qty { get; set; }
     public decimal UnitPrice { get; set; }
     public decimal LineTotal { get; set; }
+    public BookSummaryDto? Book { get; set; }
 }
 
 public class OrderInvoiceDto
@@ -78,6 +79,22 @@ public class OrderSearchRequest
     public DateTime? ToDate { get; set; }
     public int PageNumber { get; set; } = 1;
     public int PageSize { get; set; } = 10;
+}
+
+public class BookSummaryDto
+{
+    public string Isbn { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public int PageCount { get; set; }
+    public decimal AveragePrice { get; set; }
+    public int PublishYear { get; set; }
+    public long CategoryId { get; set; }
+    public string? CategoryName { get; set; }
+    public long PublisherId { get; set; }
+    public string? PublisherName { get; set; }
+    public string? ImageUrl { get; set; }
+    public int Stock { get; set; }
+    public bool Status { get; set; }
 }
 
 public class ApproveOrderRequest

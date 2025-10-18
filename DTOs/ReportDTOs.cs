@@ -10,6 +10,27 @@ public class RevenueReportRequest
 	public DateTime ToDate { get; set; }
 }
 
+public class InventoryReportItem
+{
+    public string Category { get; set; } = string.Empty;
+    public string Isbn { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public int QuantityOnHand { get; set; }
+    public decimal AveragePrice { get; set; }
+}
+
+public class InventoryReportResponse
+{
+    public DateTime ReportDate { get; set; }
+    public List<InventoryReportItem> Items { get; set; } = new();
+}
+
+public class RecomputeAveragePriceResponse
+{
+    public string Isbn { get; set; } = string.Empty;
+    public decimal AveragePrice { get; set; }
+}
+
 public class RevenueByDayDto
 {
 	public DateTime Day { get; set; }

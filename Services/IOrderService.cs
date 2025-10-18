@@ -10,11 +10,13 @@ public interface IOrderService
 	Task<ApiResponse<OrderDto>> ApproveOrderAsync(long orderId, ApproveOrderRequest request, string approverEmail);
 	Task<ApiResponse<OrderDto>> AssignDeliveryAsync(long orderId, AssignDeliveryRequest request, string assignerEmail);
 	Task<ApiResponse<OrderDto>> ConfirmDeliveredAsync(long orderId, ConfirmDeliveredRequest request, string confirmerEmail);
+	Task<ApiResponse<OrderListResponse>> GetMyAssignedOrdersAsync(long deliveryEmployeeId, int pageNumber, int pageSize);
 
 	Task<ApiResponse<List<SuggestedEmployeeDto>>> GetDeliveryCandidatesAsync(long orderId);
 	Task<ApiResponse<OrderDto>> CreateOrderAsync(CreateOrderDto createOrderDto, long customerId);
 	Task<Customer?> GetCustomerByAccountIdAsync(long accountId);
 	Task<ApiResponse<InvoiceDto>> GetInvoiceByOrderIdAsync(long orderId);
+	Task<long?> GetEmployeeIdByEmailAsync(string email);
 }
 
 

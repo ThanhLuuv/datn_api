@@ -87,7 +87,22 @@ public class OrderService : IOrderService
                         BookTitle = l.Book.Title,
                         Qty = l.Qty,
                         UnitPrice = l.UnitPrice,
-                        LineTotal = l.Qty * l.UnitPrice
+                        LineTotal = l.Qty * l.UnitPrice,
+                        Book = new BookSummaryDto
+                        {
+                            Isbn = l.Book.Isbn,
+                            Title = l.Book.Title,
+                            PageCount = l.Book.PageCount,
+                            AveragePrice = l.Book.AveragePrice,
+                            PublishYear = l.Book.PublishYear,
+                            CategoryId = l.Book.CategoryId,
+                            CategoryName = l.Book.Category.Name,
+                            PublisherId = l.Book.PublisherId,
+                            PublisherName = l.Book.Publisher.Name,
+                            ImageUrl = l.Book.ImageUrl,
+                            Stock = l.Book.Stock,
+                            Status = l.Book.Status
+                        }
                     }).ToList(),
                     Invoice = o.Invoices
                         .OrderByDescending(i => i.CreatedAt)
@@ -160,7 +175,22 @@ public class OrderService : IOrderService
                         BookTitle = l.Book.Title,
                         Qty = l.Qty,
                         UnitPrice = l.UnitPrice,
-                        LineTotal = l.Qty * l.UnitPrice
+                        LineTotal = l.Qty * l.UnitPrice,
+                        Book = new BookSummaryDto
+                        {
+                            Isbn = l.Book.Isbn,
+                            Title = l.Book.Title,
+                            PageCount = l.Book.PageCount,
+                            AveragePrice = l.Book.AveragePrice,
+                            PublishYear = l.Book.PublishYear,
+                            CategoryId = l.Book.CategoryId,
+                            CategoryName = l.Book.Category.Name,
+                            PublisherId = l.Book.PublisherId,
+                            PublisherName = l.Book.Publisher.Name,
+                            ImageUrl = l.Book.ImageUrl,
+                            Stock = l.Book.Stock,
+                            Status = l.Book.Status
+                        }
                     }).ToList(),
                     Invoice = o.Invoices
                         .OrderByDescending(i => i.CreatedAt)
@@ -309,6 +339,83 @@ public class OrderService : IOrderService
         }
     }
 
+    public async Task<ApiResponse<OrderListResponse>> GetMyAssignedOrdersAsync(long deliveryEmployeeId, int pageNumber, int pageSize)
+    {
+        try
+        {
+            pageNumber = Math.Max(1, pageNumber);
+            pageSize = Math.Clamp(pageSize, 1, 50);
+
+            var query = _context.Orders
+                .Include(o => o.OrderLines)
+                .Include(o => o.Customer)
+                .Include(o => o.ApprovedByEmployee)
+                .Include(o => o.DeliveredByEmployee)
+                .Where(o => o.DeliveredBy == deliveryEmployeeId && o.Status == OrderStatus.Confirmed)
+                .OrderByDescending(o => o.PlacedAt)
+                .AsQueryable();
+
+            var totalCount = await query.CountAsync();
+            var items = await query
+                .Skip((pageNumber - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            var dtos = items.Select(o => new OrderDto
+            {
+                OrderId = o.OrderId,
+                CustomerId = o.CustomerId,
+                CustomerName = o.Customer != null ? (o.Customer.FirstName + " " + o.Customer.LastName) : string.Empty,
+                PlacedAt = o.PlacedAt,
+                ReceiverName = o.ReceiverName,
+                ReceiverPhone = o.ReceiverPhone,
+                ShippingAddress = o.ShippingAddress,
+                DeliveryDate = o.DeliveryDate,
+                Status = o.Status.ToString(),
+                ApprovedBy = o.ApprovedBy,
+                ApprovedByName = o.ApprovedByEmployee != null ? (o.ApprovedByEmployee.FirstName + " " + o.ApprovedByEmployee.LastName) : null,
+                DeliveredBy = o.DeliveredBy,
+                DeliveredByName = o.DeliveredByEmployee != null ? (o.DeliveredByEmployee.FirstName + " " + o.DeliveredByEmployee.LastName) : null,
+                TotalAmount = o.TotalAmount,
+                TotalQuantity = o.TotalQuantity,
+                Lines = o.OrderLines.Select(ol => new OrderLineDto
+                {
+                    OrderLineId = ol.OrderLineId,
+                    Isbn = ol.Isbn,
+                    BookTitle = ol.Book.Title,
+                    Qty = ol.Qty,
+                    UnitPrice = ol.UnitPrice,
+                    LineTotal = ol.Qty * ol.UnitPrice
+                }).ToList()
+            }).ToList();
+
+            var response = new OrderListResponse
+            {
+                Orders = dtos,
+                TotalCount = totalCount,
+                PageNumber = pageNumber,
+                PageSize = pageSize,
+                TotalPages = (int)Math.Ceiling((double)totalCount / pageSize)
+            };
+
+            return new ApiResponse<OrderListResponse>
+            {
+                Success = true,
+                Message = "Lấy danh sách đơn được phân công thành công",
+                Data = response
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<OrderListResponse>
+            {
+                Success = false,
+                Message = "Lỗi khi lấy danh sách đơn được phân công",
+                Errors = new List<string> { ex.Message }
+            };
+        }
+    }
+
     public async Task<ApiResponse<List<SuggestedEmployeeDto>>> GetDeliveryCandidatesAsync(long orderId)
     {
         try
@@ -350,9 +457,18 @@ public class OrderService : IOrderService
                 .Select(g => new { EmployeeId = g.Key, Count = g.Count() })
                 .ToDictionaryAsync(x => x.EmployeeId, x => x.Count);
 
-            // Đếm tổng đơn hàng đã giao (status = 2) cho mỗi nhân viên
+            // Đếm đơn hàng đã giao trong tháng (nếu hôm nay là ngày 1 thì tính tháng trước) cho mỗi nhân viên
+            var today = DateTime.Today;
+            var targetDate = today.Day == 1 ? today.AddMonths(-1) : today;
+            var monthStart = new DateTime(targetDate.Year, targetDate.Month, 1);
+            var monthEnd = monthStart.AddMonths(1).AddDays(-1);
+
             var totalDeliveredByEmp = await _context.Orders
-                .Where(o => o.Status == OrderStatus.Delivered && o.DeliveredBy != null)
+                .Where(o => o.Status == OrderStatus.Delivered
+                            && o.DeliveredBy != null
+                            && o.DeliveryDate != null
+                            && o.DeliveryDate >= monthStart
+                            && o.DeliveryDate <= monthEnd)
                 .GroupBy(o => o.DeliveredBy!.Value)
                 .Select(g => new { EmployeeId = g.Key, Count = g.Count() })
                 .ToDictionaryAsync(x => x.EmployeeId, x => x.Count);
@@ -401,6 +517,12 @@ public class OrderService : IOrderService
         {
             return new ApiResponse<List<SuggestedEmployeeDto>> { Success = false, Message = "Lỗi khi gợi ý nhân viên giao hàng", Errors = new List<string> { ex.Message } };
         }
+    }
+
+    public async Task<long?> GetEmployeeIdByEmailAsync(string email)
+    {
+        var employee = await _context.Employees.Include(e => e.Account).FirstOrDefaultAsync(e => e.Account.Email == email);
+        return employee?.EmployeeId;
     }
     private static System.Linq.Expressions.Expression<Func<Order, OrderDto>> MapToOrderDtoSelector()
         => o => new OrderDto
