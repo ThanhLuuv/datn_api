@@ -36,6 +36,18 @@ public class Return
     [Column("notes")]
     public string? Notes { get; set; }
 
+    [Column("apply_deduction")]
+    public bool ApplyDeduction { get; set; } = false;
+
+    [Column("deduction_percent", TypeName = "decimal(5,2)")]
+    public decimal DeductionPercent { get; set; } = 0;
+
+    [Column("deduction_amount", TypeName = "decimal(12,2)")]
+    public decimal DeductionAmount { get; set; } = 0;
+
+    [Column("final_amount", TypeName = "decimal(12,2)")]
+    public decimal FinalAmount { get; set; } = 0;
+
     // Navigation properties
     [ForeignKey("InvoiceId")]
     public virtual Invoice Invoice { get; set; } = null!;

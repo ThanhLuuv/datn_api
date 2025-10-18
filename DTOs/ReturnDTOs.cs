@@ -6,11 +6,16 @@ namespace BookStore.Api.DTOs;
 public class CreateReturnLineDto
 {
     [Required]
-    public long OrderLineId { get; set; }
+    [MaxLength(20)]
+    public string Isbn { get; set; } = string.Empty;
 
     [Required]
     [Range(1, int.MaxValue)]
     public int QtyReturned { get; set; }
+
+    [Required]
+    [Range(0, double.MaxValue)]
+    public decimal UnitPrice { get; set; }
 }
 
 public class CreateReturnDto
@@ -24,6 +29,13 @@ public class CreateReturnDto
     [Required]
     [MinLength(1)]
     public List<CreateReturnLineDto> Lines { get; set; } = new();
+
+    public bool ApplyDeduction { get; set; } = false;
+
+    [Range(0, 100)]
+    public decimal DeductionPercent { get; set; } = 0;
+
+    public bool CreatePayout { get; set; } = false;
 }
 
 public class ReturnLineDto
@@ -50,6 +62,10 @@ public class ReturnDto
     public DateTime? ProcessedAt { get; set; }
     public string? Notes { get; set; }
     public decimal TotalAmount { get; set; }
+    public bool ApplyDeduction { get; set; }
+    public decimal DeductionPercent { get; set; }
+    public decimal DeductionAmount { get; set; }
+    public decimal FinalAmount { get; set; }
     public List<ReturnLineDto> Lines { get; set; } = new();
     public ReturnOrderDto? Order { get; set; }
 }
