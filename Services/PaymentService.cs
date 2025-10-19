@@ -27,7 +27,8 @@ public class PaymentService : IPaymentService
 			Amount = request.Amount,
 			Currency = request.Currency,
 			ReturnUrl = request.ReturnUrl,
-			Status = "PENDING"
+			Status = "PENDING",
+			OrderCode = 0 // Will be set after we get TransactionId
 		};
 		_context.PaymentTransactions.Add(txn);
 		await _context.SaveChangesAsync();
@@ -37,7 +38,53 @@ public class PaymentService : IPaymentService
 		var apiKey = _config["PayOS:ApiKey"] ?? "";
 		var checksumKey = _config["PayOS:ChecksumKey"] ?? "";
 
-		var orderCode = txn.TransactionId; // unique
+		// Check if this order already has a pending payment transaction
+		var existingTxn = await _context.PaymentTransactions
+			.FirstOrDefaultAsync(pt => pt.OrderId == request.OrderId && pt.Status == "PENDING");
+		
+		if (existingTxn != null)
+		{
+			// Return existing payment link if available
+			if (!string.IsNullOrEmpty(existingTxn.CheckoutUrl))
+			{
+				return new ApiResponse<CreatePaymentLinkResponseDto>
+				{
+					Success = true,
+					Message = "Liên kết thanh toán đã tồn tại",
+					Data = new CreatePaymentLinkResponseDto
+					{
+						TransactionId = existingTxn.TransactionId,
+						CheckoutUrl = existingTxn.CheckoutUrl,
+						ProviderTxnId = existingTxn.ProviderTxnId ?? ""
+					}
+				};
+			}
+			
+			// If no checkout URL, remove the failed transaction and create new one
+			_context.PaymentTransactions.Remove(existingTxn);
+			await _context.SaveChangesAsync();
+			
+			// Recreate transaction with new ID
+			txn = new PaymentTransaction
+			{
+				OrderId = request.OrderId,
+				Amount = request.Amount,
+				Currency = request.Currency,
+				ReturnUrl = request.ReturnUrl,
+				Status = "PENDING",
+				OrderCode = 0 // Will be set after we get TransactionId
+			};
+			_context.PaymentTransactions.Add(txn);
+			await _context.SaveChangesAsync();
+		}
+		
+		// Create unique orderCode using transactionId + random suffix
+		var random = new Random().Next(1000, 9999);
+		var orderCode = long.Parse($"{txn.TransactionId}{random}");
+		
+		// Save orderCode to transaction
+		txn.OrderCode = orderCode;
+		await _context.SaveChangesAsync();
 		var amount = (long)Math.Round(request.Amount, 0, MidpointRounding.AwayFromZero);
 		var description = $"DH#{request.OrderId}";
 		var returnUrl = request.ReturnUrl ?? _config["PayOS:ReturnUrl"] ?? "";
@@ -206,7 +253,7 @@ public class PaymentService : IPaymentService
 			
 			Console.WriteLine($"Processing webhook: orderCode={orderCode}, code={code}, desc={desc}, status={status}");
 
-			var txn = await _context.PaymentTransactions.FirstOrDefaultAsync(t => t.TransactionId == orderCode);
+			var txn = await _context.PaymentTransactions.FirstOrDefaultAsync(t => t.OrderCode == orderCode);
 			if (txn != null)
 			{
 				txn.Status = status.ToUpperInvariant();

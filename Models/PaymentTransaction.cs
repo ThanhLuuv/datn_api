@@ -15,6 +15,10 @@ public class PaymentTransaction
 	public long OrderId { get; set; }
 
 	[Required]
+	[Column("order_code")]
+	public long OrderCode { get; set; }
+
+	[Required]
 	[Column("amount", TypeName = "decimal(18,2)")]
 	public decimal Amount { get; set; }
 

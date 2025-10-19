@@ -291,17 +291,18 @@ public class PromotionService : IPromotionService
                 return new ApiResponse<PromotionDto> { Success = false, Message = "Không tìm thấy khuyến mãi" };
             }
 
-            // Check if promotion has started (can't modify started promotions)
+            // Allow editing promotions even if they have started
+            // Only prevent editing if promotion has ended
             var today = DateOnly.FromDateTime(DateTime.Today);
-            if (promotion.StartDate <= today)
+            if (promotion.EndDate < today)
             {
-                return new ApiResponse<PromotionDto> { Success = false, Message = "Không thể chỉnh sửa khuyến mãi đã bắt đầu" };
+                return new ApiResponse<PromotionDto> { Success = false, Message = "Không thể chỉnh sửa khuyến mãi đã kết thúc" };
             }
 
-            // Validate dates
-            if (updatePromotionDto.EndDate <= updatePromotionDto.StartDate)
+            // Validate dates - allow end date to be same as start date
+            if (updatePromotionDto.EndDate < updatePromotionDto.StartDate)
             {
-                return new ApiResponse<PromotionDto> { Success = false, Message = "Ngày kết thúc phải sau ngày bắt đầu" };
+                return new ApiResponse<PromotionDto> { Success = false, Message = "Ngày kết thúc không được trước ngày bắt đầu" };
             }
 
             // Check if name already exists (excluding current promotion)
@@ -379,11 +380,12 @@ public class PromotionService : IPromotionService
                 return new ApiResponse<bool> { Success = false, Message = "Không tìm thấy khuyến mãi" };
             }
 
-            // Check if promotion has started (can't delete started promotions)
+            // Allow deleting promotions even if they have started
+            // Only prevent deleting if promotion has ended
             var today = DateOnly.FromDateTime(DateTime.Today);
-            if (promotion.StartDate <= today)
+            if (promotion.EndDate < today)
             {
-                return new ApiResponse<bool> { Success = false, Message = "Không thể xóa khuyến mãi đã bắt đầu" };
+                return new ApiResponse<bool> { Success = false, Message = "Không thể xóa khuyến mãi đã kết thúc" };
             }
 
             // Remove book promotions first (due to foreign key constraint)

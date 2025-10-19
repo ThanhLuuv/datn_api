@@ -108,10 +108,10 @@ public class UpdatePromotionDto
     // Validation method
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
-        if (EndDate <= StartDate)
+        if (EndDate < StartDate)
         {
             yield return new ValidationResult(
-                "Ngày kết thúc phải sau ngày bắt đầu",
+                "Ngày kết thúc không được trước ngày bắt đầu",
                 new[] { nameof(EndDate) });
         }
     }
