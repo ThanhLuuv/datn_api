@@ -2,6 +2,8 @@ using BookStore.Api.Data;
 using BookStore.Api.DTOs;
 using BookStore.Api.Models;
 using Microsoft.EntityFrameworkCore;
+using MailKit.Net.Smtp;
+using MimeKit;
 
 namespace BookStore.Api.Services;
 
@@ -11,13 +13,15 @@ public class OrderService : IOrderService
     private readonly IPaymentService _paymentService;
     private readonly IInvoiceService _invoiceService;
     private readonly ICartService _cartService;
+    private readonly IConfiguration _configuration;
 
-    public OrderService(BookStoreDbContext context, IPaymentService paymentService, IInvoiceService invoiceService, ICartService cartService)
+    public OrderService(BookStoreDbContext context, IPaymentService paymentService, IInvoiceService invoiceService, ICartService cartService, IConfiguration configuration)
     {
         _context = context;
         _paymentService = paymentService;
         _invoiceService = invoiceService;
         _cartService = cartService;
+        _configuration = configuration;
     }
 
     public async Task<ApiResponse<OrderListResponse>> GetOrdersAsync(OrderSearchRequest request)
@@ -74,6 +78,7 @@ public class OrderService : IOrderService
                     ShippingAddress = o.ShippingAddress,
                     DeliveryDate = o.DeliveryDate,
                     Status = o.Status.ToString(),
+                    Note = o.Note,
                     ApprovedBy = o.ApprovedBy,
                     ApprovedByName = o.ApprovedByEmployee != null ? o.ApprovedByEmployee.FirstName + " " + o.ApprovedByEmployee.LastName : null,
                     DeliveredBy = o.DeliveredBy,
@@ -162,6 +167,7 @@ public class OrderService : IOrderService
                     ShippingAddress = o.ShippingAddress,
                     DeliveryDate = o.DeliveryDate,
                     Status = o.Status.ToString(),
+                    Note = o.Note,
                     ApprovedBy = o.ApprovedBy,
                     ApprovedByName = o.ApprovedByEmployee != null ? o.ApprovedByEmployee.FirstName + " " + o.ApprovedByEmployee.LastName : null,
                     DeliveredBy = o.DeliveredBy,
@@ -288,7 +294,9 @@ public class OrderService : IOrderService
                 return new ApiResponse<OrderDto> { Success = false, Message = "Đơn hàng không ở trạng thái có thể phân công" };
             }
 
-            var deliveryEmp = await _context.Employees.FirstOrDefaultAsync(e => e.EmployeeId == request.DeliveryEmployeeId);
+            var deliveryEmp = await _context.Employees
+                .Include(e => e.Account)
+                .FirstOrDefaultAsync(e => e.EmployeeId == request.DeliveryEmployeeId);
             if (deliveryEmp == null)
             {
                 return new ApiResponse<OrderDto> { Success = false, Message = "Nhân viên giao hàng không tồn tại" };
@@ -299,6 +307,9 @@ public class OrderService : IOrderService
             order.Status = OrderStatus.Confirmed; // Tự động confirm khi phân công delivery
 
             await _context.SaveChangesAsync();
+
+            // Gửi email thông báo cho nhân viên giao hàng
+            await SendDeliveryAssignmentEmailAsync(order, deliveryEmp);
 
             return await GetOrderByIdAsync(orderId);
         }
@@ -339,6 +350,64 @@ public class OrderService : IOrderService
         }
     }
 
+    public async Task<ApiResponse<OrderDto>> CancelOrderAsync(long orderId, CancelOrderRequest request, string cancellerEmail)
+    {
+        try
+        {
+            var order = await _context.Orders.FirstOrDefaultAsync(o => o.OrderId == orderId);
+            if (order == null)
+            {
+                return new ApiResponse<OrderDto> { Success = false, Message = "Không tìm thấy đơn hàng" };
+            }
+
+            // Chỉ cho phép hủy đơn ở trạng thái PendingConfirmation hoặc Confirmed
+            if (order.Status != OrderStatus.PendingConfirmation && order.Status != OrderStatus.Confirmed)
+            {
+                return new ApiResponse<OrderDto> 
+                { 
+                    Success = false, 
+                    Message = "Không thể hủy đơn hàng ở trạng thái này. Chỉ có thể hủy đơn đang chờ xác nhận hoặc đã xác nhận." 
+                };
+            }
+
+            // Kiểm tra nếu đơn đã giao thì không thể hủy
+            if (order.Status == OrderStatus.Delivered)
+            {
+                return new ApiResponse<OrderDto> 
+                { 
+                    Success = false, 
+                    Message = "Không thể hủy đơn hàng đã giao thành công" 
+                };
+            }
+
+            // Chuyển trạng thái sang Cancelled
+            order.Status = OrderStatus.Cancelled;
+            
+            // Lưu thông tin người hủy
+            var canceller = await _context.Employees.Include(e => e.Account).FirstOrDefaultAsync(e => e.Account.Email == cancellerEmail);
+            if (canceller != null)
+            {
+                order.ApprovedBy = canceller.EmployeeId; // Sử dụng ApprovedBy để lưu người hủy
+            }
+
+            // Lưu ghi chú hủy đơn vào cột note
+            var cancellationInfo = $"CANCELLED - Reason: {request.Reason}";
+            if (!string.IsNullOrWhiteSpace(request.Note))
+            {
+                cancellationInfo += $" | Note: {request.Note}";
+            }
+            order.Note = cancellationInfo;
+
+            await _context.SaveChangesAsync();
+
+            return await GetOrderByIdAsync(orderId);
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<OrderDto> { Success = false, Message = "Lỗi khi hủy đơn hàng", Errors = new List<string> { ex.Message } };
+        }
+    }
+
     public async Task<ApiResponse<OrderListResponse>> GetMyAssignedOrdersAsync(long deliveryEmployeeId, int pageNumber, int pageSize)
     {
         try
@@ -348,10 +417,11 @@ public class OrderService : IOrderService
 
             var query = _context.Orders
                 .Include(o => o.OrderLines)
+                    .ThenInclude(ol => ol.Book)
                 .Include(o => o.Customer)
                 .Include(o => o.ApprovedByEmployee)
                 .Include(o => o.DeliveredByEmployee)
-                .Where(o => o.DeliveredBy == deliveryEmployeeId && o.Status == OrderStatus.Confirmed)
+                .Where(o => o.DeliveredBy == deliveryEmployeeId)
                 .OrderByDescending(o => o.PlacedAt)
                 .AsQueryable();
 
@@ -372,6 +442,7 @@ public class OrderService : IOrderService
                 ShippingAddress = o.ShippingAddress,
                 DeliveryDate = o.DeliveryDate,
                 Status = o.Status.ToString(),
+                Note = o.Note,
                 ApprovedBy = o.ApprovedBy,
                 ApprovedByName = o.ApprovedByEmployee != null ? (o.ApprovedByEmployee.FirstName + " " + o.ApprovedByEmployee.LastName) : null,
                 DeliveredBy = o.DeliveredBy,
@@ -497,7 +568,7 @@ public class OrderService : IOrderService
                     EmployeeId = e.EmployeeId,
                     FullName = e.FullName,
                     Phone = e.Phone,
-                    Email = e.Email,
+                    Email = e.Account.Email, // Lấy email từ Account thay vì Employee
                     AreaName = areaNames,
                     IsAreaMatched = isAreaMatched,
                     ActiveAssignedOrders = activeAssigned,
@@ -536,6 +607,7 @@ public class OrderService : IOrderService
             ShippingAddress = o.ShippingAddress,
             DeliveryDate = o.DeliveryDate,
             Status = o.Status.ToString(),
+            Note = o.Note,
             ApprovedBy = o.ApprovedBy,
             ApprovedByName = o.ApprovedByEmployee != null ? o.ApprovedByEmployee.FirstName + " " + o.ApprovedByEmployee.LastName : null,
             DeliveredBy = o.DeliveredBy,
@@ -587,12 +659,12 @@ public class OrderService : IOrderService
                 };
             }
 
-            // Get current prices for all books
+            // Get discounted prices for all books (apply active promotions if any)
             var bookPrices = new Dictionary<string, decimal>();
             foreach (var book in books)
             {
-                var currentPrice = await GetCurrentPriceAsync(book.Isbn);
-                bookPrices[book.Isbn] = currentPrice;
+                var discountedPrice = await GetDiscountedPriceAsync(book.Isbn);
+                bookPrices[book.Isbn] = discountedPrice;
             }
 
             // Create order
@@ -609,7 +681,7 @@ public class OrderService : IOrderService
             _context.Orders.Add(order);
             await _context.SaveChangesAsync();
 
-            // Create order lines with current prices
+            // Create order lines with discounted prices
             foreach (var lineDto in createOrderDto.Lines)
             {
                 var currentPrice = bookPrices[lineDto.Isbn];
@@ -618,7 +690,7 @@ public class OrderService : IOrderService
                     OrderId = order.OrderId,
                     Isbn = lineDto.Isbn,
                     Qty = lineDto.Qty,
-                    UnitPrice = currentPrice // Use current price at order time
+                    UnitPrice = currentPrice // Use discounted price at order time
                 };
 
                 _context.OrderLines.Add(orderLine);
@@ -722,6 +794,29 @@ public class OrderService : IOrderService
         return book;
     }
 
+    private async Task<decimal> GetDiscountedPriceAsync(string isbn)
+    {
+        var currentPrice = await GetCurrentPriceAsync(isbn);
+
+        // Find active promotion with highest discount for this ISBN
+        var activePromotion = await _context.BookPromotions
+            .Include(bp => bp.Promotion)
+            .Where(bp => bp.Isbn == isbn
+                        && bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow)
+                        && bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow))
+            .OrderByDescending(bp => bp.Promotion.DiscountPct)
+            .FirstOrDefaultAsync();
+
+        if (activePromotion != null)
+        {
+            var discountPct = activePromotion.Promotion.DiscountPct;
+            var discounted = currentPrice * (1m - (discountPct / 100m));
+            return Math.Round(discounted, 2, MidpointRounding.AwayFromZero);
+        }
+
+        return currentPrice;
+    }
+
     public async Task<Customer?> GetCustomerByAccountIdAsync(long accountId)
     {
         return await _context.Customers
@@ -774,6 +869,67 @@ public class OrderService : IOrderService
                 Message = "Lỗi khi lấy thông tin hóa đơn",
                 Errors = new List<string> { ex.Message }
             };
+        }
+    }
+
+    private async Task SendDeliveryAssignmentEmailAsync(Order order, Employee deliveryEmployee)
+    {
+        try
+        {
+            var emailTo = deliveryEmployee.Account.Email;
+            if (string.IsNullOrWhiteSpace(emailTo))
+            {
+                return; // No email to send
+            }
+
+            var host = _configuration["Email:Smtp:Host"] ?? "smtp.gmail.com";
+            var port = int.TryParse(_configuration["Email:Smtp:Port"], out var p) ? p : 587;
+            var user = _configuration["Email:Credentials:User"];
+            var pass = (_configuration["Email:Credentials:Password"] ?? string.Empty).Replace(" ", string.Empty);
+
+            if (string.IsNullOrWhiteSpace(user) || string.IsNullOrWhiteSpace(pass))
+            {
+                return; // Missing configuration
+            }
+
+            var message = new MimeMessage();
+            message.From.Add(new MailboxAddress("BookStore", user));
+            message.To.Add(MailboxAddress.Parse(emailTo));
+            message.Subject = $"Phân công giao hàng - Đơn hàng #{order.OrderId}";
+
+            var bodyBuilder = new BodyBuilder
+            {
+                TextBody = $@"Kính gửi anh/chị {deliveryEmployee.FullName},
+
+Bạn đã được phân công giao hàng cho đơn hàng #{order.OrderId}.
+
+Thông tin đơn hàng:
+- Mã đơn hàng: #{order.OrderId}
+- Khách hàng: {order.ReceiverName}
+- Số điện thoại: {order.ReceiverPhone}
+- Địa chỉ giao hàng: {order.ShippingAddress}
+- Ngày giao hàng dự kiến: {order.DeliveryDate?.ToString("dd/MM/yyyy") ?? "Chưa xác định"}
+- Tổng tiền: {order.TotalAmount:N0} VND
+- Số lượng sản phẩm: {order.TotalQuantity}
+
+Vui lòng liên hệ với khách hàng để xác nhận thời gian giao hàng phù hợp.
+
+Trân trọng,
+Hệ thống BookStore"
+            };
+
+            message.Body = bodyBuilder.ToMessageBody();
+
+            using var smtp = new SmtpClient();
+            await smtp.ConnectAsync(host, port, MailKit.Security.SecureSocketOptions.StartTls);
+            await smtp.AuthenticateAsync(user, pass);
+            await smtp.SendAsync(message);
+            await smtp.DisconnectAsync(true);
+        }
+        catch (Exception ex)
+        {
+            // Log error but don't fail the assignment
+            Console.WriteLine($"Warning: Failed to send delivery assignment email: {ex.Message}");
         }
     }
 }

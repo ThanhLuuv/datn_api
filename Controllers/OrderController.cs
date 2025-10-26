@@ -127,6 +127,33 @@ public class OrderController : ControllerBase
         return Ok(result);
     }
 
+    [HttpPost("{orderId}/cancel")]
+    [Authorize(Roles = "ADMIN,EMPLOYEE,DELIVERY_EMPLOYEE")] 
+    public async Task<ActionResult<ApiResponse<OrderDto>>> CancelOrder(long orderId, [FromBody] CancelOrderRequest request)
+    {
+        if (!ModelState.IsValid)
+        {
+            var errors = ModelState.Values
+                .SelectMany(v => v.Errors)
+                .Select(e => e.ErrorMessage)
+                .ToList();
+
+            return BadRequest(new ApiResponse<OrderDto>
+            {
+                Success = false,
+                Message = "Dữ liệu không hợp lệ",
+                Errors = errors
+            });
+        }
+
+        var email = User.FindFirst(ClaimTypes.Email)?.Value ?? User.FindFirst("email")?.Value ?? User.FindFirst("sub")?.Value;
+        if (string.IsNullOrEmpty(email)) return Unauthorized(new ApiResponse<OrderDto> { Success = false, Message = "Không thể xác định người dùng" });
+        
+        var result = await _orderService.CancelOrderAsync(orderId, request, email);
+        if (!result.Success) return BadRequest(result);
+        return Ok(result);
+    }
+
     [HttpGet("{orderId}/delivery-candidates")]
     [Authorize(Roles = "ADMIN,EMPLOYEE")]
     public async Task<ActionResult<ApiResponse<List<SuggestedEmployeeDto>>>> GetDeliveryCandidates(long orderId)

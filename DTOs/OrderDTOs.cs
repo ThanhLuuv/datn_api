@@ -13,6 +13,7 @@ public class OrderDto
     public string ShippingAddress { get; set; } = string.Empty;
     public DateTime? DeliveryDate { get; set; }
     public string Status { get; set; } = string.Empty;
+    public string? Note { get; set; }
     public long? ApprovedBy { get; set; }
     public string? ApprovedByName { get; set; }
     public long? DeliveredBy { get; set; }
@@ -115,6 +116,15 @@ public class ConfirmDeliveredRequest
 {
     [Required]
     public bool Success { get; set; }
+    public string? Note { get; set; }
+}
+
+public class CancelOrderRequest
+{
+    [Required(ErrorMessage = "Cancellation reason is required")]
+    [MaxLength(500, ErrorMessage = "Cancellation reason cannot exceed 500 characters")]
+    public string Reason { get; set; } = string.Empty;
+    
     public string? Note { get; set; }
 }
 

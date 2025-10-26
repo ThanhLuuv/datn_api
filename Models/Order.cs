@@ -40,6 +40,10 @@ public class Order
     [Column("status")]
     public OrderStatus Status { get; set; } = OrderStatus.PendingConfirmation;
 
+    [MaxLength(255)]
+    [Column("note")]
+    public string? Note { get; set; }
+
     [Column("approved_by")]
     public long? ApprovedBy { get; set; }
 
