@@ -12,6 +12,7 @@ public class OrderDto
     public string ReceiverPhone { get; set; } = string.Empty;
     public string ShippingAddress { get; set; } = string.Empty;
     public DateTime? DeliveryDate { get; set; }
+    public DateTime? DeliveryAt { get; set; }
     public string Status { get; set; } = string.Empty;
     public string? Note { get; set; }
     public long? ApprovedBy { get; set; }
@@ -110,6 +111,7 @@ public class AssignDeliveryRequest
     [Required]
     public long DeliveryEmployeeId { get; set; }
     public DateTime? DeliveryDate { get; set; }
+    public DateTime? DeliveryAt { get; set; }
 }
 
 public class ConfirmDeliveredRequest
@@ -145,6 +147,8 @@ public class CreateOrderDto
     [Required(ErrorMessage = "Order lines are required")]
     [MinLength(1, ErrorMessage = "At least one order line is required")]
     public List<CreateOrderLineDto> Lines { get; set; } = new();
+
+    public DateTime? DeliveryAt { get; set; }
 }
 
 public class CreateOrderLineDto

@@ -23,6 +23,7 @@ public class InventoryReportResponse
 {
     public DateTime ReportDate { get; set; }
     public List<InventoryReportItem> Items { get; set; } = new();
+    public ReportGeneratedByDto? GeneratedBy { get; set; }
 }
 
 public class RecomputeAveragePriceResponse
@@ -41,6 +42,7 @@ public class RevenueReportResponse
 {
 	public List<RevenueByDayDto> Items { get; set; } = new();
 	public decimal TotalRevenue { get; set; }
+    public ReportGeneratedByDto? GeneratedBy { get; set; }
 }
 
 
@@ -55,6 +57,7 @@ public class MonthlyRevenueReportResponse
 {
     public List<RevenueByMonthDto> Items { get; set; } = new();
     public decimal TotalRevenue { get; set; }
+    public ReportGeneratedByDto? GeneratedBy { get; set; }
 }
 
 public class RevenueByQuarterDto
@@ -68,6 +71,14 @@ public class QuarterlyRevenueReportResponse
 {
     public List<RevenueByQuarterDto> Items { get; set; } = new();
     public decimal TotalRevenue { get; set; }
+    public ReportGeneratedByDto? GeneratedBy { get; set; }
+}
+
+public class ReportGeneratedByDto
+{
+    public long? AccountId { get; set; }
+    public string? Email { get; set; }
+    public string? FullName { get; set; }
 }
 
 

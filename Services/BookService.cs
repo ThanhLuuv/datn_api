@@ -922,6 +922,110 @@ public class BookService : IBookService
         }
     }
 
+    public async Task<ApiResponse<BookListResponse>> GetBooksByCategoryAsync(long categoryId, int pageNumber, int pageSize, string? searchTerm = null)
+    {
+        try
+        {
+            var query = _context.Books
+                .Include(b => b.Category)
+                .Include(b => b.Publisher)
+                .Include(b => b.AuthorBooks)
+                    .ThenInclude(ab => ab.Author)
+                .Where(b => b.CategoryId == categoryId);
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                query = query.Where(b => b.Title.Contains(searchTerm) ||
+                                       b.Isbn.Contains(searchTerm));
+            }
+
+            var totalCount = await query.CountAsync();
+            var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
+
+            var booksData = await query
+                .OrderByDescending(b => b.CreatedAt)
+                .Skip((pageNumber - 1) * pageSize)
+                .Take(pageSize)
+                .Select(b => new
+                {
+                    b.Isbn,
+                    b.Title,
+                    b.PageCount,
+                    b.AveragePrice,
+                    b.PublishYear,
+                    b.CategoryId,
+                    CategoryName = b.Category.Name,
+                    b.PublisherId,
+                    PublisherName = b.Publisher.Name,
+                    b.ImageUrl,
+                    b.CreatedAt,
+                    b.UpdatedAt,
+                    b.Stock,
+                    b.Status,
+                    Authors = b.AuthorBooks.Select(ab => new AuthorDto
+                    {
+                        AuthorId = ab.Author.AuthorId,
+                        FirstName = ab.Author.FirstName,
+                        LastName = ab.Author.LastName,
+                        FullName = ab.Author.FirstName + " " + ab.Author.LastName,
+                        Gender = ab.Author.Gender,
+                        DateOfBirth = ab.Author.DateOfBirth
+                    }).ToList()
+                })
+                .ToListAsync();
+
+            var books = new List<BookDto>();
+            foreach (var bookData in booksData)
+            {
+                var currentPrice = await GetCurrentPriceAsync(bookData.Isbn);
+                books.Add(new BookDto
+                {
+                    Isbn = bookData.Isbn,
+                    Title = bookData.Title,
+                    PageCount = bookData.PageCount,
+                    AveragePrice = bookData.AveragePrice,
+                    CurrentPrice = currentPrice,
+                    PublishYear = bookData.PublishYear,
+                    CategoryId = bookData.CategoryId,
+                    CategoryName = bookData.CategoryName,
+                    PublisherId = bookData.PublisherId,
+                    PublisherName = bookData.PublisherName,
+                    ImageUrl = bookData.ImageUrl,
+                    CreatedAt = bookData.CreatedAt,
+                    UpdatedAt = bookData.UpdatedAt,
+                    Stock = bookData.Stock,
+                    Status = bookData.Status,
+                    Authors = bookData.Authors
+                });
+            }
+
+            var response = new BookListResponse
+            {
+                Books = books,
+                TotalCount = totalCount,
+                PageNumber = pageNumber,
+                PageSize = pageSize,
+                TotalPages = totalPages
+            };
+
+            return new ApiResponse<BookListResponse>
+            {
+                Success = true,
+                Message = "Get books by category successfully",
+                Data = response
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<BookListResponse>
+            {
+                Success = false,
+                Message = "Error getting books by category",
+                Errors = new List<string> { ex.Message }
+            };
+        }
+    }
+
     public async Task<ApiResponse<BookDto>> CreateBookAsync(CreateBookDto createBookDto, long? employeeId = null)
     {
         try

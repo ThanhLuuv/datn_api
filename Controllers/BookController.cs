@@ -62,6 +62,25 @@ public class BookController : ControllerBase
     }
 
     /// <summary>
+    /// Lấy sách theo danh mục
+    /// </summary>
+    /// <param name="categoryId">ID danh mục</param>
+    /// <param name="pageNumber">Trang (mặc định 1)</param>
+    /// <param name="pageSize">Kích thước trang (mặc định 12)</param>
+    /// <param name="search">Từ khóa tìm kiếm tuỳ chọn</param>
+    [HttpGet("categories/{categoryId}")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<BookListResponse>>> GetBooksByCategory(long categoryId, [FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 12, [FromQuery] string? search = null)
+    {
+        var result = await _bookService.GetBooksByCategoryAsync(categoryId, pageNumber, pageSize, search);
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+        return BadRequest(result);
+    }
+
+    /// <summary>
     /// Lấy danh sách sách theo nhà xuất bản
     /// </summary>
     /// <param name="publisherId">ID nhà xuất bản</param>

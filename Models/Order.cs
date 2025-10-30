@@ -36,6 +36,10 @@ public class Order
     [Column("delivery_date", TypeName = "date")]
     public DateTime? DeliveryDate { get; set; }
 
+    // New: full delivery datetime (date and time)
+    [Column("delivery_at")]
+    public DateTime? DeliveryAt { get; set; }
+
     [Required]
     [Column("status")]
     public OrderStatus Status { get; set; } = OrderStatus.PendingConfirmation;

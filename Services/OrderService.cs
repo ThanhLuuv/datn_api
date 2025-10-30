@@ -77,6 +77,7 @@ public class OrderService : IOrderService
                     ReceiverPhone = o.ReceiverPhone,
                     ShippingAddress = o.ShippingAddress,
                     DeliveryDate = o.DeliveryDate,
+                    DeliveryAt = o.DeliveryAt,
                     Status = o.Status.ToString(),
                     Note = o.Note,
                     ApprovedBy = o.ApprovedBy,
@@ -166,6 +167,7 @@ public class OrderService : IOrderService
                     ReceiverPhone = o.ReceiverPhone,
                     ShippingAddress = o.ShippingAddress,
                     DeliveryDate = o.DeliveryDate,
+                    DeliveryAt = o.DeliveryAt,
                     Status = o.Status.ToString(),
                     Note = o.Note,
                     ApprovedBy = o.ApprovedBy,
@@ -303,7 +305,16 @@ public class OrderService : IOrderService
             }
 
             order.DeliveredBy = request.DeliveryEmployeeId;
-            order.DeliveryDate = request.DeliveryDate;
+            // Set full delivery datetime if provided; keep legacy date in sync
+            if (request.DeliveryAt.HasValue)
+            {
+                order.DeliveryAt = request.DeliveryAt.Value;
+                order.DeliveryDate = request.DeliveryAt.Value.Date;
+            }
+            else
+            {
+                order.DeliveryDate = request.DeliveryDate;
+            }
             order.Status = OrderStatus.Confirmed; // Tự động confirm khi phân công delivery
 
             await _context.SaveChangesAsync();
@@ -441,6 +452,7 @@ public class OrderService : IOrderService
                 ReceiverPhone = o.ReceiverPhone,
                 ShippingAddress = o.ShippingAddress,
                 DeliveryDate = o.DeliveryDate,
+                DeliveryAt = o.DeliveryAt,
                 Status = o.Status.ToString(),
                 Note = o.Note,
                 ApprovedBy = o.ApprovedBy,
@@ -606,6 +618,7 @@ public class OrderService : IOrderService
             ReceiverPhone = o.ReceiverPhone,
             ShippingAddress = o.ShippingAddress,
             DeliveryDate = o.DeliveryDate,
+            DeliveryAt = o.DeliveryAt,
             Status = o.Status.ToString(),
             Note = o.Note,
             ApprovedBy = o.ApprovedBy,
@@ -675,6 +688,7 @@ public class OrderService : IOrderService
                 ReceiverName = createOrderDto.ReceiverName,
                 ReceiverPhone = createOrderDto.ReceiverPhone,
                 ShippingAddress = createOrderDto.ShippingAddress,
+                DeliveryAt = createOrderDto.DeliveryAt,
                 Status = OrderStatus.PendingConfirmation // 0 - Chờ xác nhận
             };
 
@@ -897,6 +911,10 @@ public class OrderService : IOrderService
             message.To.Add(MailboxAddress.Parse(emailTo));
             message.Subject = $"Phân công giao hàng - Đơn hàng #{order.OrderId}";
 
+            var deliveryWhen = order.DeliveryAt.HasValue
+                ? order.DeliveryAt.Value.ToLocalTime().ToString("dd/MM/yyyy HH:mm")
+                : (order.DeliveryDate?.ToLocalTime().ToString("dd/MM/yyyy") ?? "Chưa xác định");
+
             var bodyBuilder = new BodyBuilder
             {
                 TextBody = $@"Kính gửi anh/chị {deliveryEmployee.FullName},
@@ -908,7 +926,7 @@ Thông tin đơn hàng:
 - Khách hàng: {order.ReceiverName}
 - Số điện thoại: {order.ReceiverPhone}
 - Địa chỉ giao hàng: {order.ShippingAddress}
-- Ngày giao hàng dự kiến: {order.DeliveryDate?.ToString("dd/MM/yyyy") ?? "Chưa xác định"}
+- Ngày giờ giao hàng dự kiến: {deliveryWhen}
 - Tổng tiền: {order.TotalAmount:N0} VND
 - Số lượng sản phẩm: {order.TotalQuantity}
 
