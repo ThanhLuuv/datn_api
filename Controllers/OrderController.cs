@@ -128,7 +128,7 @@ public class OrderController : ControllerBase
     }
 
     [HttpPost("{orderId}/cancel")]
-    [Authorize(Roles = "ADMIN,EMPLOYEE,DELIVERY_EMPLOYEE")] 
+    [Authorize(Roles = "ADMIN,EMPLOYEE,DELIVERY_EMPLOYEE,CUSTOMER")]
     public async Task<ActionResult<ApiResponse<OrderDto>>> CancelOrder(long orderId, [FromBody] CancelOrderRequest request)
     {
         if (!ModelState.IsValid)

@@ -15,6 +15,95 @@ public class ReportService : IReportService
 		_context = context;
 	}
 
+    public async Task<ApiResponse<ProfitReportDto>> GetProfitReportAsync(DateTime? fromDate, DateTime? toDate)
+    {
+        try
+        {
+            // Keep date-only values for display to avoid timezone shift on client
+            var fromDateOnly = fromDate?.Date ?? DateTime.UtcNow.Date.AddDays(-30);
+            var toDateOnly = toDate?.Date ?? DateTime.UtcNow.Date;
+
+            // Use inclusive end-of-day for calculations
+            var from = fromDateOnly;
+            var to = toDateOnly.AddDays(1).AddTicks(-1);
+
+            var paidInvoices = await _context.Invoices
+                .Where(i => i.PaymentStatus == "PAID" && i.PaidAt != null && i.PaidAt >= from && i.PaidAt <= to)
+                .ToListAsync();
+            var refundedInvoices = await _context.Invoices
+                .Where(i => i.PaymentStatus == "REFUNDED" && i.UpdatedAt >= from && i.UpdatedAt <= to)
+                .ToListAsync();
+
+            var revenue = paidInvoices.Sum(i => i.TotalAmount) - refundedInvoices.Sum(i => i.TotalAmount);
+
+            var paidCogs = await _context.OrderLines
+                .Where(ol => _context.Invoices.Any(i => i.OrderId == ol.OrderId && i.PaymentStatus == "PAID" && i.PaidAt != null && i.PaidAt >= from && i.PaidAt <= to))
+                .SumAsync(ol => ol.Qty * ol.Book.AveragePrice);
+            var refundedCogs = await _context.OrderLines
+                .Where(ol => _context.Invoices.Any(i => i.OrderId == ol.OrderId && i.PaymentStatus == "REFUNDED" && i.UpdatedAt >= from && i.UpdatedAt <= to))
+                .SumAsync(ol => ol.Qty * ol.Book.AveragePrice);
+            var cogs = paidCogs - refundedCogs;
+
+            var opex = await _context.ExpenseVouchers
+                .Where(ev => ev.Status == "APPROVED" && ev.VoucherDate >= from && ev.VoucherDate <= to && (ev.ExpenseType == null || ev.ExpenseType != "RETURN_REFUND") && (ev.ExpenseType == null || ev.ExpenseType != "ORDER_REFUND"))
+                .SumAsync(ev => (decimal?)ev.TotalAmount) ?? 0m;
+
+            var dto = new ProfitReportDto
+            {
+                FromDate = fromDateOnly,
+                ToDate = toDateOnly,
+                OrdersCount = paidInvoices.Count,
+                Revenue = revenue,
+                CostOfGoods = cogs,
+                OperatingExpenses = opex
+            };
+
+            return new ApiResponse<ProfitReportDto> { Success = true, Message = "Tính lợi nhuận thành công", Data = dto };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<ProfitReportDto> { Success = false, Message = "Lỗi khi tính báo cáo lợi nhuận", Errors = new List<string> { ex.Message } };
+        }
+    }
+
+    public async Task<ApiResponse<BooksByCategoryResponse>> GetBooksByCategoryAsync()
+    {
+        try
+        {
+            // Count books by category name; fall back to 'Khác' when missing
+            var query = await _context.Books
+                .Include(b => b.Category)
+                .GroupBy(b => b.Category != null ? b.Category.Name : "Khác")
+                .Select(g => new { Category = g.Key, Count = g.Count() })
+                .OrderByDescending(x => x.Count)
+                .ToListAsync();
+
+            var total = query.Sum(x => x.Count);
+            var items = query.Select(x => new BooksByCategoryItemDto
+            {
+                Category = x.Category ?? "Khác",
+                Count = x.Count,
+                Percent = total > 0 ? Math.Round((decimal)x.Count * 100m / total, 2) : 0m
+            }).ToList();
+
+            return new ApiResponse<BooksByCategoryResponse>
+            {
+                Success = true,
+                Message = "Lấy tỷ lệ sách theo danh mục thành công",
+                Data = new BooksByCategoryResponse { Total = total, Items = items }
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<BooksByCategoryResponse>
+            {
+                Success = false,
+                Message = "Lỗi khi lấy tỷ lệ sách theo danh mục",
+                Errors = new List<string> { ex.Message }
+            };
+        }
+    }
+
     public async Task<ApiResponse<InventoryReportResponse>> GetInventoryAsOfDateAsync(DateTime reportDate)
     {
         try
@@ -218,7 +307,7 @@ public class ReportService : IReportService
                 };
             }
         }
-	public async Task<ApiResponse<RevenueReportResponse>> GetRevenueByDateRangeAsync(RevenueReportRequest request)
+public async Task<ApiResponse<RevenueReportResponse>> GetRevenueByDateRangeAsync(RevenueReportRequest request)
 	{
 		try
 		{

@@ -12,16 +12,18 @@ public class OrderService : IOrderService
     private readonly BookStoreDbContext _context;
     private readonly IPaymentService _paymentService;
     private readonly IInvoiceService _invoiceService;
+    private readonly IExpenseService _expenseService;
     private readonly ICartService _cartService;
     private readonly IConfiguration _configuration;
 
-    public OrderService(BookStoreDbContext context, IPaymentService paymentService, IInvoiceService invoiceService, ICartService cartService, IConfiguration configuration)
+    public OrderService(BookStoreDbContext context, IPaymentService paymentService, IInvoiceService invoiceService, ICartService cartService, IConfiguration configuration, IExpenseService expenseService)
     {
         _context = context;
         _paymentService = paymentService;
         _invoiceService = invoiceService;
         _cartService = cartService;
         _configuration = configuration;
+        _expenseService = expenseService;
     }
 
     public async Task<ApiResponse<OrderListResponse>> GetOrdersAsync(OrderSearchRequest request)
@@ -410,6 +412,43 @@ public class OrderService : IOrderService
             order.Note = cancellationInfo;
 
             await _context.SaveChangesAsync();
+
+            // Nếu đơn đã có hóa đơn và đã thanh toán -> tạo phiếu chi hoàn tiền và cập nhật trạng thái hóa đơn
+            var paidInvoice = await _context.Invoices.FirstOrDefaultAsync(i => i.OrderId == orderId && i.PaymentStatus == "PAID");
+            if (paidInvoice != null)
+            {
+                try
+                {
+                    // Tạo phiếu chi hoàn tiền cho đơn hàng
+                    var createVoucher = new CreateExpenseVoucherDto
+                    {
+                        VoucherDate = DateTime.UtcNow,
+                        Description = $"Hoàn tiền do hủy đơn hàng #{orderId}",
+                        ExpenseType = "ORDER_REFUND",
+                        Lines = new List<CreateExpenseVoucherLineDto>
+                        {
+                            new CreateExpenseVoucherLineDto
+                            {
+                                Description = $"Hoàn tiền đơn #{orderId}",
+                                Amount = paidInvoice.TotalAmount,
+                                Reference = orderId.ToString(),
+                                ReferenceType = "ORDER"
+                            }
+                        }
+                    };
+
+                    // Lấy id nhân viên nếu có, nếu không truyền 0 (sẽ lưu được vì cột cho phép null trong DB model)
+                    var voucherCreator = await _context.Employees.Include(e => e.Account).FirstOrDefaultAsync(e => e.Account.Email == cancellerEmail);
+                    var createdById = voucherCreator?.EmployeeId ?? 0;
+                    await _expenseService.CreateExpenseVoucherAsync(createVoucher, createdById);
+
+                    // Cập nhật trạng thái hóa đơn -> REFUNDED
+                    paidInvoice.PaymentStatus = "REFUNDED";
+                    paidInvoice.UpdatedAt = DateTime.UtcNow;
+                    await _context.SaveChangesAsync();
+                }
+                catch { /* tránh làm hỏng luồng hủy đơn nếu tạo phiếu chi lỗi */ }
+            }
 
             return await GetOrderByIdAsync(orderId);
         }

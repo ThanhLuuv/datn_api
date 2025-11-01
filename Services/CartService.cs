@@ -169,6 +169,20 @@ public class CartService : ICartService
                 await _context.SaveChangesAsync();
             }
 
+            // Consolidate any duplicate rows of the same ISBN (defensive fix for legacy data)
+            var sameIsbnItems = cart.CartItems.Where(ci => ci.Isbn == request.Isbn).ToList();
+            if (sameIsbnItems.Count > 1)
+            {
+                var keepItem = sameIsbnItems[0];
+                var mergedQty = sameIsbnItems.Skip(1).Sum(x => x.Quantity);
+                if (mergedQty > 0)
+                {
+                    keepItem.Quantity += mergedQty;
+                    keepItem.UpdatedAt = DateTime.UtcNow;
+                }
+                _context.CartItems.RemoveRange(sameIsbnItems.Skip(1));
+            }
+
             // Check if item already exists
             var existingItem = cart.CartItems.FirstOrDefault(ci => ci.Isbn == request.Isbn);
             if (existingItem != null)

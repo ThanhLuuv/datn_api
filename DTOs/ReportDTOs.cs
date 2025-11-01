@@ -2,6 +2,24 @@ using System.ComponentModel.DataAnnotations;
 
 namespace BookStore.Api.DTOs;
 
+public class ProfitReportRequest
+{
+    public DateTime? FromDate { get; set; }
+    public DateTime? ToDate { get; set; }
+}
+
+public class ProfitReportDto
+{
+    public DateTime FromDate { get; set; }
+    public DateTime ToDate { get; set; }
+    public int OrdersCount { get; set; }
+    public decimal Revenue { get; set; }
+    public decimal CostOfGoods { get; set; }
+    public decimal OperatingExpenses { get; set; }
+    public decimal Profit => Revenue - CostOfGoods - OperatingExpenses;
+    public ReportGeneratedByDto? GeneratedBy { get; set; }
+}
+
 public class RevenueReportRequest
 {
 	[Required]
@@ -81,4 +99,16 @@ public class ReportGeneratedByDto
     public string? FullName { get; set; }
 }
 
+public class BooksByCategoryItemDto
+{
+    public string Category { get; set; } = string.Empty;
+    public int Count { get; set; }
+    public decimal Percent { get; set; }
+}
+
+public class BooksByCategoryResponse
+{
+    public int Total { get; set; }
+    public List<BooksByCategoryItemDto> Items { get; set; } = new();
+}
 
