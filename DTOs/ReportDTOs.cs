@@ -17,7 +17,30 @@ public class ProfitReportDto
     public decimal CostOfGoods { get; set; }
     public decimal OperatingExpenses { get; set; }
     public decimal Profit => Revenue - CostOfGoods - OperatingExpenses;
+    public List<ProfitTopSoldItemDto> TopSoldItems { get; set; } = new();
+    public List<ProfitTopMarginItemDto> TopMarginItems { get; set; } = new();
     public ReportGeneratedByDto? GeneratedBy { get; set; }
+}
+
+public class ProfitTopSoldItemDto
+{
+    public string Isbn { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public int QtySold { get; set; }
+    public decimal Revenue { get; set; }
+    public decimal Cogs { get; set; }
+    public decimal Profit { get; set; }
+}
+
+public class ProfitTopMarginItemDto
+{
+    public string Isbn { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public int QtySold { get; set; }
+    public decimal Revenue { get; set; }
+    public decimal Cogs { get; set; }
+    public decimal Profit { get; set; }
+    public decimal MarginPct { get; set; }
 }
 
 public class RevenueReportRequest

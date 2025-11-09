@@ -941,6 +941,88 @@ GET /api/test/staff-only
 
 ---
 
+## 👥 8. EMPLOYEE & DEPARTMENT MANAGEMENT APIs
+
+### 8.1 Employee APIs (ADMIN)
+
+List employees (search, filter by department, pagination)
+```http
+GET /api/employee?searchTerm=&departmentId=&pageNumber=1&pageSize=10
+```
+
+Get employee by id
+```http
+GET /api/employee/{employeeId}
+```
+
+Create employee with login account (transactional)
+```http
+POST /api/employee/create-with-account
+Content-Type: application/json
+
+{
+  "accountEmail": "employee@example.com",
+  "password": "Password123!",
+  "roleId": 2,
+  "isActive": true,
+  "departmentId": 1,
+  "firstName": "Nguyen",
+  "lastName": "Van A",
+  "gender": "Male",
+  "dateOfBirth": "1995-01-01T00:00:00Z",
+  "address": "HN",
+  "phone": "0900000000",
+  "employeeEmail": "nv.a@example.com"
+}
+```
+
+Update employee
+```http
+PUT /api/employee/{employeeId}
+```
+
+Delete employee
+```http
+DELETE /api/employee/{employeeId}
+```
+
+### 8.2 Department APIs (ADMIN)
+
+List departments
+```http
+GET /api/department?pageNumber=1&pageSize=10&searchTerm=
+```
+
+Get department by id
+```http
+GET /api/department/{departmentId}
+```
+
+Create department
+```http
+POST /api/department
+{
+  "name": "Phòng Kinh doanh",
+  "description": "Quản lý bán hàng"
+}
+```
+
+Update department
+```http
+PUT /api/department/{departmentId}
+```
+
+Delete department
+```http
+DELETE /api/department/{departmentId}
+```
+
+Notes
+- All endpoints require JWT and ADMIN role.
+- Permissions added: READ_EMPLOYEE, WRITE_EMPLOYEE, READ_DEPARTMENT, WRITE_DEPARTMENT.
+
+---
+
 ## 🎯 7. PROMOTION APIs
 
 ### 7.1 Lấy danh sách khuyến mãi

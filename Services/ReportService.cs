@@ -19,44 +19,75 @@ public class ReportService : IReportService
     {
         try
         {
-            // Keep date-only values for display to avoid timezone shift on client
-            var fromDateOnly = fromDate?.Date ?? DateTime.UtcNow.Date.AddDays(-30);
-            var toDateOnly = toDate?.Date ?? DateTime.UtcNow.Date;
+            var from = fromDate ?? DateTime.UtcNow.AddDays(-30);
+            var to = toDate ?? DateTime.UtcNow;
 
-            // Use inclusive end-of-day for calculations
-            var from = fromDateOnly;
-            var to = toDateOnly.AddDays(1).AddTicks(-1);
+            var connection = _context.Database.GetDbConnection();
+            await connection.OpenAsync();
 
-            var paidInvoices = await _context.Invoices
-                .Where(i => i.PaymentStatus == "PAID" && i.PaidAt != null && i.PaidAt >= from && i.PaidAt <= to)
-                .ToListAsync();
-            var refundedInvoices = await _context.Invoices
-                .Where(i => i.PaymentStatus == "REFUNDED" && i.UpdatedAt >= from && i.UpdatedAt <= to)
-                .ToListAsync();
+            using var command = connection.CreateCommand();
+            command.CommandText = "CALL report_profit(@fromDate, @toDate)";
+            var p1 = command.CreateParameter();
+            p1.ParameterName = "@fromDate";
+            p1.Value = from;
+            command.Parameters.Add(p1);
+            var p2 = command.CreateParameter();
+            p2.ParameterName = "@toDate";
+            p2.Value = to;
+            command.Parameters.Add(p2);
 
-            var revenue = paidInvoices.Sum(i => i.TotalAmount) - refundedInvoices.Sum(i => i.TotalAmount);
+            var dto = new ProfitReportDto();
 
-            var paidCogs = await _context.OrderLines
-                .Where(ol => _context.Invoices.Any(i => i.OrderId == ol.OrderId && i.PaymentStatus == "PAID" && i.PaidAt != null && i.PaidAt >= from && i.PaidAt <= to))
-                .SumAsync(ol => ol.Qty * ol.Book.AveragePrice);
-            var refundedCogs = await _context.OrderLines
-                .Where(ol => _context.Invoices.Any(i => i.OrderId == ol.OrderId && i.PaymentStatus == "REFUNDED" && i.UpdatedAt >= from && i.UpdatedAt <= to))
-                .SumAsync(ol => ol.Qty * ol.Book.AveragePrice);
-            var cogs = paidCogs - refundedCogs;
-
-            var opex = await _context.ExpenseVouchers
-                .Where(ev => ev.Status == "APPROVED" && ev.VoucherDate >= from && ev.VoucherDate <= to && (ev.ExpenseType == null || ev.ExpenseType != "RETURN_REFUND") && (ev.ExpenseType == null || ev.ExpenseType != "ORDER_REFUND"))
-                .SumAsync(ev => (decimal?)ev.TotalAmount) ?? 0m;
-
-            var dto = new ProfitReportDto
+            using (var reader = await command.ExecuteReaderAsync())
             {
-                FromDate = fromDateOnly,
-                ToDate = toDateOnly,
-                OrdersCount = paidInvoices.Count,
-                Revenue = revenue,
-                CostOfGoods = cogs,
-                OperatingExpenses = opex
-            };
+                // Result set #1: summary
+                if (await reader.ReadAsync())
+                {
+                    dto.FromDate = reader.IsDBNull(0) ? from.Date : reader.GetDateTime(0);
+                    dto.ToDate = reader.IsDBNull(1) ? to.Date : reader.GetDateTime(1);
+                    dto.OrdersCount = reader.IsDBNull(2) ? 0 : Convert.ToInt32(reader.GetValue(2));
+                    dto.Revenue = reader.IsDBNull(3) ? 0 : reader.GetDecimal(3);
+                    dto.CostOfGoods = reader.IsDBNull(4) ? 0 : reader.GetDecimal(4);
+                    dto.OperatingExpenses = reader.IsDBNull(5) ? 0 : reader.GetDecimal(5);
+                }
+
+                // Result set #2: top sold items
+                if (await reader.NextResultAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        dto.TopSoldItems.Add(new ProfitTopSoldItemDto
+                        {
+                            Isbn = reader.IsDBNull(0) ? string.Empty : reader.GetString(0),
+                            Title = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                            QtySold = reader.IsDBNull(2) ? 0 : Convert.ToInt32(reader.GetValue(2)),
+                            Revenue = reader.IsDBNull(3) ? 0 : reader.GetDecimal(3),
+                            Cogs = reader.IsDBNull(4) ? 0 : reader.GetDecimal(4),
+                            Profit = reader.IsDBNull(5) ? 0 : reader.GetDecimal(5)
+                        });
+                    }
+                }
+
+                // Result set #3: top margin items
+                if (await reader.NextResultAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        dto.TopMarginItems.Add(new ProfitTopMarginItemDto
+                        {
+                            Isbn = reader.IsDBNull(0) ? string.Empty : reader.GetString(0),
+                            Title = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                            QtySold = reader.IsDBNull(2) ? 0 : Convert.ToInt32(reader.GetValue(2)),
+                            Revenue = reader.IsDBNull(3) ? 0 : reader.GetDecimal(3),
+                            Cogs = reader.IsDBNull(4) ? 0 : reader.GetDecimal(4),
+                            Profit = reader.IsDBNull(5) ? 0 : reader.GetDecimal(5),
+                            MarginPct = reader.IsDBNull(6) ? 0 : reader.GetDecimal(6)
+                        });
+                    }
+                }
+            }
+
+            await connection.CloseAsync();
 
             return new ApiResponse<ProfitReportDto> { Success = true, Message = "Tính lợi nhuận thành công", Data = dto };
         }

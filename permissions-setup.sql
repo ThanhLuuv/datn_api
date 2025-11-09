@@ -32,8 +32,12 @@ VALUES
 	(6,  'WRITE_PURCHASE_ORDER',  'Ghi đơn đặt mua',        'Tạo, sửa, xóa đơn đặt mua'),
 	(7,  'READ_GOODS_RECEIPT',    'Đọc phiếu nhập',         'Xem danh sách phiếu nhập'),
 	(8,  'WRITE_GOODS_RECEIPT',   'Ghi phiếu nhập',         'Tạo, sửa, xóa phiếu nhập'),
-	(9,  'SALES_MANAGEMENT',      'Quản lý bán hàng',       'Quản lý đơn hàng, khách hàng'),
-	(10, 'DELIVERY_MANAGEMENT',   'Quản lý giao hàng',      'Quản lý vận chuyển, giao hàng')
+    (9,  'SALES_MANAGEMENT',      'Quản lý bán hàng',       'Quản lý đơn hàng, khách hàng'),
+    (10, 'DELIVERY_MANAGEMENT',   'Quản lý giao hàng',      'Quản lý vận chuyển, giao hàng'),
+    (11, 'READ_EMPLOYEE',         'Xem nhân viên',          'Xem danh sách và chi tiết nhân viên'),
+    (12, 'WRITE_EMPLOYEE',        'Quản lý nhân viên',      'Tạo, sửa, xóa nhân viên'),
+    (13, 'READ_DEPARTMENT',       'Xem phòng ban',          'Xem danh sách và chi tiết phòng ban'),
+    (14, 'WRITE_DEPARTMENT',      'Quản lý phòng ban',      'Tạo, sửa, xóa phòng ban')
 AS new(permission_id, code, name, description)
 ON DUPLICATE KEY UPDATE
 	code = new.code,

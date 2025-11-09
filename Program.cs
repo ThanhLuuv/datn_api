@@ -65,6 +65,11 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("PERM_WRITE_PO", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_PURCHASE_ORDER")));
     options.AddPolicy("PERM_READ_GR", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_GOODS_RECEIPT")));
     options.AddPolicy("PERM_WRITE_GR", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_GOODS_RECEIPT")));
+    // Employee/Department management permissions
+    options.AddPolicy("PERM_READ_EMPLOYEE", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_EMPLOYEE")));
+    options.AddPolicy("PERM_WRITE_EMPLOYEE", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_EMPLOYEE")));
+    options.AddPolicy("PERM_READ_DEPARTMENT", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_DEPARTMENT")));
+    options.AddPolicy("PERM_WRITE_DEPARTMENT", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_DEPARTMENT")));
 });
 
 // CORS Configuration
@@ -96,6 +101,8 @@ builder.Services.AddScoped<IReturnService, ReturnService>();
 builder.Services.AddScoped<IPriceChangeService, PriceChangeService>();
 builder.Services.AddScoped<ICartService, CartService>();
 builder.Services.AddScoped<IExpenseService, ExpenseService>();
+builder.Services.AddScoped<IEmployeeService, EmployeeService>();
+builder.Services.AddScoped<IDepartmentService, DepartmentService>();
 
 // Health Checks
 builder.Services.AddHealthChecks()
