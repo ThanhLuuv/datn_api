@@ -2,37 +2,30 @@ pipeline {
   agent any
 
   environment {
-    IMAGE        = 'bookstore/api'        // Docker image name for backend
-    TAG          = "${env.BUILD_NUMBER}"  // Tag by build number
-    DEPLOY_DIR   = '/srv/bookstore-api'   // Deploy directory on server
-    COMPOSE_FILE = 'docker-compose.yml'   // Compose file in this repo
-
-    // Healthcheck config
-    HEALTH_HOST  = '127.0.0.1'            // Server itself
-    HEALTH_PORT  = '3001'                 // Đổi sang 3001
-    HEALTH_PATH  = '/health'              // Nếu API bạn có endpoint /health thì giữ, không thì chỉnh lại
+    IMAGE        = 'bookstore/api'        // Docker image name (tên ảnh)
+    TAG          = "${env.BUILD_NUMBER}"  // Tag theo số build
+    DEPLOY_DIR   = '/srv/bookstore-api'   // Thư mục triển khai trên server
+    COMPOSE_FILE = 'docker-compose.yml'
+    HEALTH_PORT  = '3001'                 // Cổng để healthcheck
+    HEALTH_PATH  = '/health'              // Đường dẫn healthcheck
   }
 
   options { timestamps() }
 
   stages {
-    stage('Checkout') {
+    stage('Checkout (lấy mã)') {
       steps { checkout scm }
     }
 
-    stage('Build Docker image') {
+    stage('Build Docker image (đóng gói)') {
       steps {
         sh '''
-          docker build \
-            -f Dockerfile \
-            -t ${IMAGE}:${TAG} \
-            -t ${IMAGE}:latest \
-            .
+          docker build -t ${IMAGE}:${TAG} -t ${IMAGE}:latest .
         '''
       }
     }
 
-    stage('Prepare deploy dir') {
+    stage('Prepare deploy dir (chuẩn bị triển khai)') {
       steps {
         sh '''
           mkdir -p ${DEPLOY_DIR}
@@ -41,22 +34,39 @@ pipeline {
       }
     }
 
-    stage('Deploy (Docker Compose)') {
+    stage('Deploy with Compose (triển khai)') {
       steps {
         sh '''
           cd ${DEPLOY_DIR}
-          export BUILD_TAG=${TAG} IMAGE=${IMAGE} HEALTH_PATH=${HEALTH_PATH}
-          docker compose -f ${COMPOSE_FILE} up -d --remove-orphans
+          export BUILD_TAG=${TAG}
+          # Không pull backend (image build local); không build lại tại deploy
+          docker compose -f ${COMPOSE_FILE} up -d
           docker image prune -f || true
         '''
       }
     }
 
-    stage('Healthcheck') {
+    stage('DB migration (tuỳ chọn)') {
+      when {
+        expression { return params.RUN_MIGRATIONS == true }
+      }
+      steps {
+        sh '''
+          cd ${DEPLOY_DIR}
+          if docker compose -f ${COMPOSE_FILE} exec -T backend sh -lc "dotnet ef --version 2>/dev/null || echo 'no-ef'"; then
+            docker compose -f ${COMPOSE_FILE} exec -T backend dotnet ef database update || echo "Migration failed or not needed"
+          else
+            echo "No EF tools available; skipping migration"
+          fi
+        '''
+      }
+    }
+
+    stage('Healthcheck (kiểm tra sống)') {
       steps {
         sh '''
           for i in {1..30}; do
-            if curl -fsS "http://${HEALTH_HOST}:${HEALTH_PORT}${HEALTH_PATH}" > /dev/null; then
+            if curl -fsS http://http://103.221.223.183:${HEALTH_PORT}${HEALTH_PATH} > /dev/null; then
               echo "Healthy on :${HEALTH_PORT}"; exit 0
             fi
             sleep 2
@@ -70,7 +80,7 @@ pipeline {
   }
 
   post {
-    success { echo 'Deploy BE OK (Docker Compose)' }
-    failure { echo 'Deploy BE FAILED' }
+    success { echo 'Deploy OK (Docker Compose)' }
+    failure { echo 'Deploy FAILED' }
   }
 }
