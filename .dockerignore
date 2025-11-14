@@ -1,3 +1,25 @@
+**/bin/
+**/obj/
+**/.vs/
+.git/
+.gitignore
+README.md
+*.md
+*.http
+*.ps1
+*.bat
+*.sql
+TestScripts/
+Properties/launchSettings.json
+*.user
+*.suo
+*.cache
+*.log
+*.tmp
+Dockerfile.*
+docker-compose.*.yml
+.env
+
 # .dockerignore
 **/.dockerignore
 **/.env

@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  backend:
+    image: "${IMAGE}:${BUILD_TAG}"
+    container_name: "bookstore-api"
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      # Lắng nghe trên 0.0.0.0:3001 bên trong container
+      - ASPNETCORE_URLS=http://0.0.0.0:3001
+    ports:
+      # Map cổng host 3001 -> container 3001
+      - "3001:3001"
+    networks:
+      - bookstore_net
+
+networks:
+  bookstore_net:
+    name: bookstore_net
+    external: false

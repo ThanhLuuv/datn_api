@@ -1,7 +1,8 @@
 # Dockerfile
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
 WORKDIR /app
-EXPOSE 8080
+# Lắng nghe trên cổng 3001 bên trong container
+EXPOSE 3001
 
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src

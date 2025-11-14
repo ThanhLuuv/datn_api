@@ -437,7 +437,8 @@ public class BookService : IBookService
                         DateOfBirth = ab.Author.DateOfBirth
                     }).ToList(),
                     Promotions = b.BookPromotions
-                        .Where(bp => bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) && bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow))
+                        .Where(bp => bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) 
+                        && bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow))
                         .Select(bp => new
                         {
                             bp.Promotion.PromotionId,
@@ -546,7 +547,8 @@ public class BookService : IBookService
                         DateOfBirth = ab.Author.DateOfBirth
                     }).ToList(),
                     Promotions = b.BookPromotions
-                        .Where(bp => bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) && bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow))
+                        .Where(bp => bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) 
+                        && bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow))
                         .Select(bp => new
                         {
                             bp.Promotion.PromotionId,
@@ -659,7 +661,8 @@ public class BookService : IBookService
                         DateOfBirth = ab.Author.DateOfBirth
                     }).ToList(),
                     Promotions = b.BookPromotions
-                        .Where(bp => bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) && bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow))
+                        .Where(bp => bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) 
+                        && bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow))
                         .Select(bp => new
                         {
                             bp.Promotion.PromotionId,
