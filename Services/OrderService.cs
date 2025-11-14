@@ -761,8 +761,8 @@ public class OrderService : IOrderService
                 OrderId = order.OrderId,
                 Amount = totalAmount,
                 Currency = "VND",
-                ReturnUrl = "http://127.0.0.1:3000/#!/payment/success",
-                CancelUrl = "http://127.0.0.1:3000/#!/payment/cancel"
+                ReturnUrl = "https://bookstore.thanhlaptrinh.online/#!/payment/success",
+                CancelUrl = "https://bookstore.thanhlaptrinh.online/#!/payment/cancel"
             };
 
             var paymentResult = await _paymentService.CreatePaymentLinkAsync(paymentRequest);
