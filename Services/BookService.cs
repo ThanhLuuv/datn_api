@@ -51,6 +51,8 @@ public class BookService : IBookService
                 .Include(b => b.Publisher)
                 .Include(b => b.AuthorBooks)
                     .ThenInclude(ab => ab.Author)
+                .Include(b => b.BookPromotions)
+                    .ThenInclude(bp => bp.Promotion)
                 .AsQueryable();
 
             // Apply search filters
@@ -137,7 +139,18 @@ public class BookService : IBookService
                         FullName = ab.Author.FirstName + " " + ab.Author.LastName,
                         Gender = ab.Author.Gender,
                         DateOfBirth = ab.Author.DateOfBirth
-                    }).ToList()
+                    }).ToList(),
+                    Promotions = b.BookPromotions
+                        .Where(bp => bp.Promotion.StartDate <= DateOnly.FromDateTime(DateTime.UtcNow) 
+                            && bp.Promotion.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow))
+                        .Select(bp => new
+                        {
+                            bp.Promotion.PromotionId,
+                            bp.Promotion.Name,
+                            bp.Promotion.DiscountPct,
+                            bp.Promotion.StartDate,
+                            bp.Promotion.EndDate
+                        }).ToList()
                 })
                 .ToListAsync();
 
@@ -145,6 +158,12 @@ public class BookService : IBookService
             foreach (var bookData in booksData)
             {
                 var currentPrice = await GetCurrentPriceAsync(bookData.Isbn);
+                var discountedPrice = currentPrice;
+                if (bookData.Promotions.Any())
+                {
+                    var maxDiscount = bookData.Promotions.Max(p => p.DiscountPct);
+                    discountedPrice = currentPrice * (1 - maxDiscount / 100);
+                }
                 
                 // Apply price filtering based on current price
                 if (searchRequest.MinPrice.HasValue && currentPrice < searchRequest.MinPrice.Value)
@@ -159,6 +178,7 @@ public class BookService : IBookService
                     PageCount = bookData.PageCount,
                     AveragePrice = bookData.AveragePrice,
                     CurrentPrice = currentPrice,
+                    DiscountedPrice = discountedPrice,
                     PublishYear = bookData.PublishYear,
                     CategoryId = bookData.CategoryId,
                     CategoryName = bookData.CategoryName,
@@ -169,7 +189,16 @@ public class BookService : IBookService
                     UpdatedAt = bookData.UpdatedAt,
                     Stock = bookData.Stock,
                     Status = bookData.Status,
-                    Authors = bookData.Authors
+                    Authors = bookData.Authors,
+                    HasPromotion = bookData.Promotions.Any(),
+                    ActivePromotions = bookData.Promotions.Select(p => new BookPromotionDto
+                    {
+                        PromotionId = p.PromotionId,
+                        Name = p.Name,
+                        DiscountPct = p.DiscountPct,
+                        StartDate = p.StartDate.ToDateTime(TimeOnly.MinValue),
+                        EndDate = p.EndDate.ToDateTime(TimeOnly.MaxValue)
+                    }).ToList()
                 });
             }
 
