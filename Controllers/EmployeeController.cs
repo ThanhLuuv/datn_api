@@ -7,7 +7,7 @@ namespace BookStore.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class EmployeeController : ControllerBase
 {
     private readonly IEmployeeService _employeeService;
@@ -18,6 +18,7 @@ public class EmployeeController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = "PERM_READ_EMPLOYEE")]
     public async Task<ActionResult<ApiResponse<EmployeeListResponse>>> GetEmployees([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 10, [FromQuery] string? searchTerm = null, [FromQuery] long? departmentId = null)
     {
         var result = await _employeeService.GetEmployeesAsync(pageNumber, pageSize, searchTerm, departmentId);
@@ -26,6 +27,7 @@ public class EmployeeController : ControllerBase
     }
 
     [HttpGet("{employeeId}")]
+    [Authorize(Policy = "PERM_READ_EMPLOYEE")]
     public async Task<ActionResult<ApiResponse<EmployeeDto>>> GetEmployee(long employeeId)
     {
         var result = await _employeeService.GetEmployeeByIdAsync(employeeId);
@@ -34,6 +36,7 @@ public class EmployeeController : ControllerBase
     }
 
     [HttpPost("create-with-account")]
+    [Authorize(Policy = "PERM_WRITE_EMPLOYEE")]
     public async Task<ActionResult<ApiResponse<EmployeeDto>>> CreateEmployeeWithAccount([FromBody] CreateEmployeeWithAccountRequest request)
     {
         if (!ModelState.IsValid)
@@ -48,6 +51,7 @@ public class EmployeeController : ControllerBase
     }
 
     [HttpPut("{employeeId}")]
+    [Authorize(Policy = "PERM_WRITE_EMPLOYEE")]
     public async Task<ActionResult<ApiResponse<EmployeeDto>>> UpdateEmployee(long employeeId, [FromBody] UpdateEmployeeDto request)
     {
         if (!ModelState.IsValid)
@@ -62,6 +66,7 @@ public class EmployeeController : ControllerBase
     }
 
     [HttpDelete("{employeeId}")]
+    [Authorize(Policy = "PERM_WRITE_EMPLOYEE")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteEmployee(long employeeId)
     {
         var result = await _employeeService.DeleteEmployeeAsync(employeeId);

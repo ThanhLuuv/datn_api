@@ -93,6 +93,28 @@ public class EmployeeService : IEmployeeService
             _context.Employees.Add(employee);
             await _context.SaveChangesAsync();
 
+            // Assign areas if provided
+            if (request.AreaIds != null && request.AreaIds.Any())
+            {
+                var validAreaIds = await _context.Areas
+                    .Where(a => request.AreaIds.Contains(a.AreaId))
+                    .Select(a => a.AreaId)
+                    .ToListAsync();
+
+                foreach (var areaId in validAreaIds)
+                {
+                    var employeeArea = new EmployeeArea
+                    {
+                        EmployeeId = employee.EmployeeId,
+                        AreaId = areaId,
+                        IsActive = true,
+                        AssignedAt = DateTime.UtcNow
+                    };
+                    _context.EmployeeAreas.Add(employeeArea);
+                }
+                await _context.SaveChangesAsync();
+            }
+
             await _context.Entry(employee).Reference(e => e.Department).LoadAsync();
             await _context.Entry(account).Reference(a => a.Role).LoadAsync();
 

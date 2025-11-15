@@ -26,6 +26,7 @@ public class RatingsController : ControllerBase
     }
 
     [HttpGet("{isbn}")]
+    [AllowAnonymous]
     public async Task<IActionResult> ListByIsbn(string isbn, [FromQuery] int page = 1, [FromQuery] int pageSize = 10)
     {
         page = Math.Max(1, page);
@@ -41,6 +42,7 @@ public class RatingsController : ControllerBase
     }
 
     [HttpGet("{isbn}/stats")]
+    [AllowAnonymous]
     public async Task<IActionResult> Stats(string isbn)
     {
         var ratings = _db.Ratings.AsNoTracking().Where(r => r.Isbn == isbn);

@@ -25,6 +25,7 @@ public class PublisherController : ControllerBase
     /// <param name="searchTerm">Từ khóa tìm kiếm</param>
     /// <returns>Danh sách nhà xuất bản</returns>
     [HttpGet]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<PublisherListResponse>>> GetPublishers(
         [FromQuery] int pageNumber = 1,
         [FromQuery] int pageSize = 10,
@@ -46,6 +47,7 @@ public class PublisherController : ControllerBase
     /// <param name="publisherId">ID nhà xuất bản</param>
     /// <returns>Thông tin nhà xuất bản</returns>
     [HttpGet("{publisherId}")]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<PublisherDto>>> GetPublisher(long publisherId)
     {
         var result = await _publisherService.GetPublisherByIdAsync(publisherId);
@@ -64,7 +66,7 @@ public class PublisherController : ControllerBase
     /// <param name="createPublisherDto">Thông tin nhà xuất bản mới</param>
     /// <returns>Thông tin nhà xuất bản đã tạo</returns>
     [HttpPost]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_PUBLISHER")]
     public async Task<ActionResult<ApiResponse<PublisherDto>>> CreatePublisher([FromBody] CreatePublisherDto createPublisherDto)
     {
         if (!ModelState.IsValid)
@@ -99,7 +101,7 @@ public class PublisherController : ControllerBase
     /// <param name="updatePublisherDto">Thông tin cập nhật</param>
     /// <returns>Thông tin nhà xuất bản đã cập nhật</returns>
     [HttpPut("{publisherId}")]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_PUBLISHER")]
     public async Task<ActionResult<ApiResponse<PublisherDto>>> UpdatePublisher(long publisherId, [FromBody] UpdatePublisherDto updatePublisherDto)
     {
         if (!ModelState.IsValid)
@@ -138,7 +140,7 @@ public class PublisherController : ControllerBase
     /// <param name="publisherId">ID nhà xuất bản</param>
     /// <returns>Kết quả xóa</returns>
     [HttpDelete("{publisherId}")]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_PUBLISHER")]
     public async Task<ActionResult<ApiResponse<bool>>> DeletePublisher(long publisherId)
     {
         var result = await _publisherService.DeletePublisherAsync(publisherId);

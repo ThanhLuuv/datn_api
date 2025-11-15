@@ -22,7 +22,7 @@ public class OrderController : ControllerBase
     }
 
     [HttpGet]
-    [Authorize(Roles = "ADMIN,EMPLOYEE,DELIVERY_EMPLOYEE")] 
+    [Authorize(Policy = "PERM_READ_ORDER")]
     public async Task<ActionResult<ApiResponse<OrderListResponse>>> GetOrders([FromQuery] OrderSearchRequest request)
     {
         var result = await _orderService.GetOrdersAsync(request);
@@ -30,7 +30,7 @@ public class OrderController : ControllerBase
     }
 
     [HttpGet("my-orders")]
-    [Authorize(Roles = "CUSTOMER")]
+    [Authorize(Policy = "PERM_READ_ORDER")]
     public async Task<ActionResult<ApiResponse<OrderListResponse>>> GetMyOrders([FromQuery] OrderSearchRequest request)
     {
         // Get account ID from token
@@ -68,7 +68,7 @@ public class OrderController : ControllerBase
     }
 
     [HttpGet("my-assigned-orders")]
-    [Authorize(Roles = "DELIVERY_EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_ORDER")]
     public async Task<ActionResult<ApiResponse<OrderListResponse>>> GetMyAssignedOrders([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 10)
     {
         var email = User.FindFirst(ClaimTypes.Email)?.Value ?? User.FindFirst("email")?.Value ?? User.FindFirst("sub")?.Value;
@@ -86,7 +86,7 @@ public class OrderController : ControllerBase
     }
 
     [HttpGet("{orderId}")]
-    [Authorize(Roles = "ADMIN,EMPLOYEE,DELIVERY_EMPLOYEE")] 
+    [Authorize(Policy = "PERM_READ_ORDER")]
     public async Task<ActionResult<ApiResponse<OrderDto>>> GetOrder(long orderId)
     {
         var result = await _orderService.GetOrderByIdAsync(orderId);
@@ -95,7 +95,7 @@ public class OrderController : ControllerBase
     }
 
     [HttpPost("{orderId}/approve")]
-    [Authorize(Roles = "ADMIN,EMPLOYEE")] 
+    [Authorize(Policy = "PERM_APPROVE_ORDER")]
     public async Task<ActionResult<ApiResponse<OrderDto>>> ApproveOrder(long orderId, [FromBody] ApproveOrderRequest request)
     {
         var email = User.FindFirst(ClaimTypes.Email)?.Value ?? User.FindFirst("email")?.Value ?? User.FindFirst("sub")?.Value;
@@ -106,7 +106,7 @@ public class OrderController : ControllerBase
     }
 
     [HttpPost("{orderId}/assign-delivery")]
-    [Authorize(Roles = "ADMIN,EMPLOYEE")] 
+    [Authorize(Policy = "PERM_ASSIGN_DELIVERY")]
     public async Task<ActionResult<ApiResponse<OrderDto>>> AssignDelivery(long orderId, [FromBody] AssignDeliveryRequest request)
     {
         var email = User.FindFirst(ClaimTypes.Email)?.Value ?? User.FindFirst("email")?.Value ?? User.FindFirst("sub")?.Value;
@@ -117,7 +117,7 @@ public class OrderController : ControllerBase
     }
 
     [HttpPost("{orderId}/confirm-delivered")]
-    [Authorize(Roles = "ADMIN,DELIVERY_EMPLOYEE")] 
+    [Authorize(Policy = "PERM_WRITE_ORDER")]
     public async Task<ActionResult<ApiResponse<OrderDto>>> ConfirmDelivered(long orderId, [FromBody] ConfirmDeliveredRequest request)
     {
         var email = User.FindFirst(ClaimTypes.Email)?.Value ?? User.FindFirst("email")?.Value ?? User.FindFirst("sub")?.Value;
@@ -128,7 +128,7 @@ public class OrderController : ControllerBase
     }
 
     [HttpPost("{orderId}/cancel")]
-    [Authorize(Roles = "ADMIN,EMPLOYEE,DELIVERY_EMPLOYEE,CUSTOMER")]
+    [Authorize(Policy = "PERM_WRITE_ORDER")]
     public async Task<ActionResult<ApiResponse<OrderDto>>> CancelOrder(long orderId, [FromBody] CancelOrderRequest request)
     {
         if (!ModelState.IsValid)
@@ -155,7 +155,7 @@ public class OrderController : ControllerBase
     }
 
     [HttpGet("{orderId}/delivery-candidates")]
-    [Authorize(Roles = "ADMIN,EMPLOYEE")]
+    [Authorize(Policy = "PERM_ASSIGN_DELIVERY")]
     public async Task<ActionResult<ApiResponse<List<SuggestedEmployeeDto>>>> GetDeliveryCandidates(long orderId)
     {
         var result = await _orderService.GetDeliveryCandidatesAsync(orderId);
@@ -164,7 +164,7 @@ public class OrderController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "CUSTOMER")]
+    [Authorize(Policy = "PERM_WRITE_ORDER")]
     public async Task<ActionResult<ApiResponse<OrderDto>>> CreateOrder([FromBody] CreateOrderDto createOrderDto)
     {
         if (!ModelState.IsValid)

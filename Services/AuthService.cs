@@ -177,4 +177,57 @@ public class AuthService : IAuthService
             };
         }
     }
+
+    public async Task<ApiResponse<AuthResponseDto>> RefreshTokenAsync(string email)
+    {
+        try
+        {
+            // Find user by email
+            var account = await _context.Accounts
+                .Include(a => a.Role)
+                .FirstOrDefaultAsync(a => a.Email == email);
+
+            if (account == null)
+            {
+                return new ApiResponse<AuthResponseDto>
+                {
+                    Success = false,
+                    Message = "Không tìm thấy tài khoản",
+                    Errors = new List<string> { "Email không tồn tại" }
+                };
+            }
+
+            // Load permissions for role
+            var permissions = await _context.RolePermissions
+                .Where(rp => rp.RoleId == account.RoleId)
+                .Select(rp => rp.Permission.Code)
+                .ToListAsync();
+
+            // Generate new JWT token with latest permissions
+            var token = _jwtService.GenerateToken(account, permissions);
+            var expireDays = 7; // Default from configuration
+
+            return new ApiResponse<AuthResponseDto>
+            {
+                Success = true,
+                Message = "Token đã được làm mới",
+                Data = new AuthResponseDto
+                {
+                    Token = token,
+                    Email = account.Email,
+                    Role = account.Role.Name,
+                    Expires = DateTime.UtcNow.AddDays(expireDays)
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<AuthResponseDto>
+            {
+                Success = false,
+                Message = "Đã xảy ra lỗi khi làm mới token",
+                Errors = new List<string> { ex.Message }
+            };
+        }
+    }
 }

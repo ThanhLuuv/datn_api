@@ -69,7 +69,7 @@ public class CategoryController : ControllerBase
     /// <param name="createCategoryDto">Thông tin danh mục mới</param>
     /// <returns>Thông tin danh mục đã tạo</returns>
     [HttpPost]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_CATEGORY")]
     public async Task<ActionResult<ApiResponse<CategoryDto>>> CreateCategory([FromBody] CreateCategoryDto createCategoryDto)
     {
         if (!ModelState.IsValid)
@@ -104,7 +104,7 @@ public class CategoryController : ControllerBase
     /// <param name="updateCategoryDto">Thông tin cập nhật</param>
     /// <returns>Thông tin danh mục đã cập nhật</returns>
     [HttpPut("{categoryId}")]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_CATEGORY")]
     public async Task<ActionResult<ApiResponse<CategoryDto>>> UpdateCategory(long categoryId, [FromBody] UpdateCategoryDto updateCategoryDto)
     {
         if (!ModelState.IsValid)
@@ -143,6 +143,7 @@ public class CategoryController : ControllerBase
     /// <param name="categoryId">ID danh mục</param>
     /// <returns>Kết quả xóa</returns>
     [HttpDelete("{categoryId}")]
+    [Authorize(Policy = "PERM_WRITE_CATEGORY")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteCategory(long categoryId)
     {
         var result = await _categoryService.DeleteCategoryAsync(categoryId);

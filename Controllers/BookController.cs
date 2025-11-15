@@ -49,6 +49,7 @@ public class BookController : ControllerBase
     /// <param name="isbn">ISBN của sách</param>
     /// <returns>Thông tin sách</returns>
     [HttpGet("{isbn}")]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<BookDto>>> GetBook(string isbn)
     {
         var result = await _bookService.GetBookByIsbnAsync(isbn);
@@ -89,6 +90,7 @@ public class BookController : ControllerBase
     /// <param name="searchTerm">Từ khóa tìm kiếm</param>
     /// <returns>Danh sách sách theo nhà xuất bản</returns>
     [HttpGet("by-publisher/{publisherId}")]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<BookListResponse>>> GetBooksByPublisher(
         long publisherId,
         [FromQuery] int pageNumber = 1,
@@ -120,7 +122,7 @@ public class BookController : ControllerBase
     /// <param name="imageFile">File ảnh</param>
     /// <returns>Thông tin sách đã tạo</returns>
     [HttpPost]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_BOOK")]
     public async Task<ActionResult<ApiResponse<BookDto>>> CreateBook(
         [FromForm] string isbn,
         [FromForm] string title,
@@ -199,7 +201,7 @@ public class BookController : ControllerBase
     /// <param name="imageFile">File ảnh mới (nếu có)</param>
     /// <returns>Thông tin sách đã cập nhật</returns>
     [HttpPut("{isbn}")]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_BOOK")]
     public async Task<ActionResult<ApiResponse<BookDto>>> UpdateBook(
         string isbn,
         [FromForm] string title,
@@ -276,6 +278,7 @@ public class BookController : ControllerBase
     /// <param name="isbn">ISBN của sách</param>
     /// <returns>Kết quả xóa</returns>
     [HttpDelete("{isbn}")]
+    [Authorize(Policy = "PERM_WRITE_BOOK")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteBook(string isbn)
     {
         var result = await _bookService.DeleteBookAsync(isbn);
@@ -298,6 +301,7 @@ public class BookController : ControllerBase
     /// </summary>
     /// <returns>Danh sách tác giả</returns>
     [HttpGet("authors")]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<List<AuthorDto>>>> GetAuthors()
     {
         var result = await _bookService.GetAuthorsAsync();
@@ -316,7 +320,7 @@ public class BookController : ControllerBase
     /// <param name="createAuthorDto">Thông tin tác giả mới</param>
     /// <returns>Thông tin tác giả đã tạo</returns>
     [HttpPost("authors")]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_AUTHOR")]
     public async Task<ActionResult<ApiResponse<AuthorDto>>> CreateAuthor([FromBody] CreateAuthorDto createAuthorDto)
     {
         if (!ModelState.IsValid)
@@ -425,7 +429,7 @@ public class BookController : ControllerBase
     /// </summary>
     /// <param name="isbn">Mã ISBN</param>
     [HttpPost("{isbn}/deactivate")]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_BOOK")]
     public async Task<ActionResult<ApiResponse<bool>>> DeactivateBook(string isbn)
     {
         var result = await _bookService.DeactivateBookAsync(isbn);
@@ -438,7 +442,7 @@ public class BookController : ControllerBase
     /// </summary>
     /// <param name="isbn">Mã ISBN</param>
     [HttpPost("{isbn}/activate")]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_BOOK")]
     public async Task<ActionResult<ApiResponse<bool>>> ActivateBook(string isbn)
     {
         var result = await _bookService.ActivateBookAsync(isbn);

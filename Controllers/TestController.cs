@@ -183,4 +183,37 @@ public class TestController : ControllerBase
             timestamp = DateTime.UtcNow
         });
     }
+
+    /// <summary>
+    /// Debug endpoint - Kiểm tra permissions trong token
+    /// </summary>
+    [HttpGet("debug-permissions")]
+    [Authorize]
+    public IActionResult DebugPermissions()
+    {
+        var userEmail = User.FindFirst(ClaimTypes.Email)?.Value ?? User.FindFirst("email")?.Value;
+        var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+        var accountId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        
+        // Get all claims
+        var allClaims = User.Claims.Select(c => new { c.Type, c.Value }).ToList();
+        
+        // Get permissions claim
+        var permissionsClaim = User.Claims.FirstOrDefault(c => c.Type == "permissions");
+        var permissions = permissionsClaim?.Value?.Split(' ', StringSplitOptions.RemoveEmptyEntries) ?? Array.Empty<string>();
+        
+        // Check specific permission
+        var hasReadReport = User.HasClaim(c => c.Type == "permissions" && ($" {c.Value} ").Contains($" READ_REPORT "));
+        
+        return Ok(new
+        {
+            email = userEmail,
+            role = userRole,
+            accountId = accountId,
+            hasReadReportPermission = hasReadReport,
+            permissionsCount = permissions.Length,
+            permissions = permissions,
+            allClaims = allClaims
+        });
+    }
 }

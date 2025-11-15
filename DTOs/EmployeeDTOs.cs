@@ -66,6 +66,9 @@ public class CreateEmployeeWithAccountRequest
     [MaxLength(191)]
     [EmailAddress]
     public string? EmployeeEmail { get; set; }
+
+    // Area assignments (many-to-many)
+    public List<long>? AreaIds { get; set; }
 }
 
 public class UpdateEmployeeDto

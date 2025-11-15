@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using BookStore.Api.Data;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using BookStore.Api.Models;
@@ -20,6 +21,7 @@ public class StorefrontController : ControllerBase
     }
 
     [HttpGet("effective-price/{isbn}")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetEffectivePrice(string isbn)
     {
         var book = await _db.Books.AsNoTracking().FirstOrDefaultAsync(b => b.Isbn == isbn);
@@ -48,6 +50,7 @@ public class StorefrontController : ControllerBase
 
     // GET: /api/storefront/bestsellers?days=30&top=10
     [HttpGet("bestsellers")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetBestSellers([FromQuery] int days = 30, [FromQuery] int top = 10)
     {
         var since = DateTime.UtcNow.AddDays(-Math.Abs(days));
@@ -74,6 +77,7 @@ public class StorefrontController : ControllerBase
 
     // GET: /api/storefront/new-books?days=30&top=10
     [HttpGet("new-books")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetNewBooks([FromQuery] int days = 30, [FromQuery] int top = 10)
     {
         var since = DateTime.UtcNow.AddDays(-Math.Abs(days));
@@ -91,6 +95,7 @@ public class StorefrontController : ControllerBase
 
     // GET: /api/storefront/search?title=abc&page=1&pageSize=12
     [HttpGet("search")]
+    [AllowAnonymous]
     public async Task<IActionResult> SearchByTitle([FromQuery] string title = "", [FromQuery] int page = 1, [FromQuery] int pageSize = 12)
     {
         var normalizedTitle = NormalizeSearchTerm(title);
@@ -202,6 +207,7 @@ public class StorefrontController : ControllerBase
 
     // GET: /api/storefront/price-history/{isbn}?limit=20
     [HttpGet("price-history/{isbn}")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetPriceHistory([FromRoute] string isbn, [FromQuery] int limit = 20)
     {
         isbn = isbn?.Trim() ?? string.Empty;

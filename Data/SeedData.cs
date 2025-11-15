@@ -22,62 +22,219 @@ public static class SeedData
             await context.SaveChangesAsync();
         }
 
-        // Seed Permissions
-        if (!await context.Permissions.AnyAsync())
+        // Seed Permissions - Đầy đủ cho tất cả modules
+        // Đảm bảo tất cả permissions được seed, kể cả khi đã có permissions cũ
+        var allPermissions = new List<Permission>
         {
-            var permissions = new List<Permission>
-            {
-                new Permission { PermissionId = 1, Code = "READ_CATEGORY", Name = "Đọc danh mục", Description = "Xem danh sách danh mục" },
-                new Permission { PermissionId = 2, Code = "WRITE_CATEGORY", Name = "Ghi danh mục", Description = "Tạo, sửa, xóa danh mục" },
-                new Permission { PermissionId = 3, Code = "READ_BOOK", Name = "Đọc sách", Description = "Xem danh sách sách" },
-                new Permission { PermissionId = 4, Code = "WRITE_BOOK", Name = "Ghi sách", Description = "Tạo, sửa, xóa sách" },
-                new Permission { PermissionId = 5, Code = "READ_PURCHASE_ORDER", Name = "Đọc đơn đặt mua", Description = "Xem danh sách đơn đặt mua" },
-                new Permission { PermissionId = 6, Code = "WRITE_PURCHASE_ORDER", Name = "Ghi đơn đặt mua", Description = "Tạo, sửa, xóa đơn đặt mua" },
-                new Permission { PermissionId = 7, Code = "READ_GOODS_RECEIPT", Name = "Đọc phiếu nhập", Description = "Xem danh sách phiếu nhập" },
-                new Permission { PermissionId = 8, Code = "WRITE_GOODS_RECEIPT", Name = "Ghi phiếu nhập", Description = "Tạo, sửa, xóa phiếu nhập" },
-                new Permission { PermissionId = 9, Code = "SALES_MANAGEMENT", Name = "Quản lý bán hàng", Description = "Quản lý đơn hàng, khách hàng" },
-                new Permission { PermissionId = 10, Code = "DELIVERY_MANAGEMENT", Name = "Quản lý giao hàng", Description = "Quản lý vận chuyển, giao hàng" }
-            };
+            // Category permissions
+            new Permission { PermissionId = 1, Code = "READ_CATEGORY", Name = "Đọc danh mục", Description = "Xem danh sách danh mục" },
+            new Permission { PermissionId = 2, Code = "WRITE_CATEGORY", Name = "Ghi danh mục", Description = "Tạo, sửa, xóa danh mục" },
+            
+            // Book permissions
+            new Permission { PermissionId = 3, Code = "READ_BOOK", Name = "Đọc sách", Description = "Xem danh sách sách" },
+            new Permission { PermissionId = 4, Code = "WRITE_BOOK", Name = "Ghi sách", Description = "Tạo, sửa, xóa sách" },
+            
+            // Publisher permissions
+            new Permission { PermissionId = 5, Code = "READ_PUBLISHER", Name = "Đọc nhà xuất bản", Description = "Xem danh sách nhà xuất bản" },
+            new Permission { PermissionId = 6, Code = "WRITE_PUBLISHER", Name = "Ghi nhà xuất bản", Description = "Tạo, sửa, xóa nhà xuất bản" },
+            
+            // Author permissions
+            new Permission { PermissionId = 7, Code = "READ_AUTHOR", Name = "Đọc tác giả", Description = "Xem danh sách tác giả" },
+            new Permission { PermissionId = 8, Code = "WRITE_AUTHOR", Name = "Ghi tác giả", Description = "Tạo, sửa, xóa tác giả" },
+            
+            // Purchase Order permissions
+            new Permission { PermissionId = 9, Code = "READ_PURCHASE_ORDER", Name = "Đọc đơn đặt mua", Description = "Xem danh sách đơn đặt mua" },
+            new Permission { PermissionId = 10, Code = "WRITE_PURCHASE_ORDER", Name = "Ghi đơn đặt mua", Description = "Tạo, sửa, xóa đơn đặt mua" },
+            
+            // Goods Receipt permissions
+            new Permission { PermissionId = 11, Code = "READ_GOODS_RECEIPT", Name = "Đọc phiếu nhập", Description = "Xem danh sách phiếu nhập" },
+            new Permission { PermissionId = 12, Code = "WRITE_GOODS_RECEIPT", Name = "Ghi phiếu nhập", Description = "Tạo, sửa, xóa phiếu nhập" },
+            
+            // Order permissions
+            new Permission { PermissionId = 13, Code = "READ_ORDER", Name = "Đọc đơn hàng", Description = "Xem danh sách đơn hàng" },
+            new Permission { PermissionId = 14, Code = "WRITE_ORDER", Name = "Ghi đơn hàng", Description = "Tạo, sửa đơn hàng" },
+            new Permission { PermissionId = 15, Code = "APPROVE_ORDER", Name = "Duyệt đơn hàng", Description = "Duyệt/hủy đơn hàng" },
+            new Permission { PermissionId = 16, Code = "ASSIGN_DELIVERY", Name = "Gán giao hàng", Description = "Gán nhân viên giao hàng cho đơn hàng" },
+            
+            // Customer permissions
+            new Permission { PermissionId = 17, Code = "READ_CUSTOMER", Name = "Đọc khách hàng", Description = "Xem danh sách khách hàng" },
+            new Permission { PermissionId = 18, Code = "WRITE_CUSTOMER", Name = "Ghi khách hàng", Description = "Tạo, sửa thông tin khách hàng" },
+            
+            // Cart permissions
+            new Permission { PermissionId = 19, Code = "READ_CART", Name = "Đọc giỏ hàng", Description = "Xem giỏ hàng" },
+            new Permission { PermissionId = 20, Code = "WRITE_CART", Name = "Ghi giỏ hàng", Description = "Thêm, sửa, xóa sản phẩm trong giỏ hàng" },
+            
+            // Payment permissions
+            new Permission { PermissionId = 21, Code = "READ_PAYMENT", Name = "Đọc thanh toán", Description = "Xem lịch sử thanh toán" },
+            new Permission { PermissionId = 22, Code = "WRITE_PAYMENT", Name = "Ghi thanh toán", Description = "Tạo liên kết thanh toán" },
+            
+            // Invoice permissions
+            new Permission { PermissionId = 23, Code = "READ_INVOICE", Name = "Đọc hóa đơn", Description = "Xem danh sách hóa đơn" },
+            new Permission { PermissionId = 24, Code = "WRITE_INVOICE", Name = "Ghi hóa đơn", Description = "Tạo, sửa hóa đơn" },
+            
+            // Promotion permissions
+            new Permission { PermissionId = 25, Code = "READ_PROMOTION", Name = "Đọc khuyến mãi", Description = "Xem danh sách khuyến mãi" },
+            new Permission { PermissionId = 26, Code = "WRITE_PROMOTION", Name = "Ghi khuyến mãi", Description = "Tạo, sửa, xóa khuyến mãi" },
+            
+            // Return permissions
+            new Permission { PermissionId = 27, Code = "READ_RETURN", Name = "Đọc trả hàng", Description = "Xem danh sách đơn trả hàng" },
+            new Permission { PermissionId = 28, Code = "WRITE_RETURN", Name = "Ghi trả hàng", Description = "Tạo, xử lý đơn trả hàng" },
+            
+            // Price Change permissions
+            new Permission { PermissionId = 29, Code = "READ_PRICE_CHANGE", Name = "Đọc thay đổi giá", Description = "Xem lịch sử thay đổi giá" },
+            new Permission { PermissionId = 30, Code = "WRITE_PRICE_CHANGE", Name = "Ghi thay đổi giá", Description = "Tạo thay đổi giá sách" },
+            
+            // Expense permissions
+            new Permission { PermissionId = 31, Code = "READ_EXPENSE", Name = "Đọc chi phí", Description = "Xem danh sách chi phí" },
+            new Permission { PermissionId = 32, Code = "WRITE_EXPENSE", Name = "Ghi chi phí", Description = "Tạo, sửa, xóa chi phí" },
+            
+            // Report permissions
+            new Permission { PermissionId = 33, Code = "READ_REPORT", Name = "Đọc báo cáo", Description = "Xem các báo cáo" },
+            
+            // Employee permissions
+            new Permission { PermissionId = 34, Code = "READ_EMPLOYEE", Name = "Đọc nhân viên", Description = "Xem danh sách nhân viên" },
+            new Permission { PermissionId = 35, Code = "WRITE_EMPLOYEE", Name = "Ghi nhân viên", Description = "Tạo, sửa, xóa nhân viên" },
+            
+            // Department permissions
+            new Permission { PermissionId = 36, Code = "READ_DEPARTMENT", Name = "Đọc phòng ban", Description = "Xem danh sách phòng ban" },
+            new Permission { PermissionId = 37, Code = "WRITE_DEPARTMENT", Name = "Ghi phòng ban", Description = "Tạo, sửa, xóa phòng ban" },
+            
+            // Area permissions
+            new Permission { PermissionId = 38, Code = "READ_AREA", Name = "Đọc khu vực", Description = "Xem danh sách khu vực" },
+            new Permission { PermissionId = 39, Code = "WRITE_AREA", Name = "Ghi khu vực", Description = "Tạo, sửa, xóa khu vực" },
+            
+            // Role & Permission permissions
+            new Permission { PermissionId = 40, Code = "READ_ROLE", Name = "Đọc vai trò", Description = "Xem danh sách vai trò" },
+            new Permission { PermissionId = 41, Code = "WRITE_ROLE", Name = "Ghi vai trò", Description = "Tạo, sửa vai trò" },
+            new Permission { PermissionId = 42, Code = "ASSIGN_PERMISSION", Name = "Gán quyền", Description = "Gán quyền cho vai trò" }
+        };
 
-            context.Permissions.AddRange(permissions);
+        // Lấy danh sách permissions đã tồn tại (theo cả PermissionId và Code)
+        var existingPermissions = await context.Permissions
+            .Select(p => new { p.PermissionId, p.Code })
+            .ToListAsync();
+        
+        var existingPermissionIds = existingPermissions.Select(p => p.PermissionId).ToList();
+        var existingPermissionCodes = existingPermissions.Select(p => p.Code).ToList();
+        
+        // Thêm các permissions chưa tồn tại (chưa có PermissionId VÀ chưa có Code)
+        var permissionsToAdd = allPermissions
+            .Where(p => !existingPermissionIds.Contains(p.PermissionId) && !existingPermissionCodes.Contains(p.Code))
+            .ToList();
+        
+        if (permissionsToAdd.Any())
+        {
+            context.Permissions.AddRange(permissionsToAdd);
             await context.SaveChangesAsync();
         }
 
-        // Seed Role Permissions
-        if (!await context.RolePermissions.AnyAsync())
+        // Seed Role Permissions - Phân quyền đầy đủ cho từng role
+        // Đảm bảo ADMIN luôn có đầy đủ permissions
+        var adminRoleId = 1L;
+        var existingAdminPerms = await context.RolePermissions
+            .Where(rp => rp.RoleId == adminRoleId)
+            .Select(rp => rp.PermissionId)
+            .ToListAsync();
+        
+        // Lấy danh sách tất cả permissions có trong database
+        var allExistingPermissions = await context.Permissions
+            .Select(p => p.PermissionId)
+            .ToListAsync();
+        
+        // Thêm các permissions còn thiếu cho ADMIN (chỉ những permissions đã tồn tại)
+        var adminPermissionsToAdd = new List<RolePermission>();
+        foreach (var permId in allExistingPermissions)
         {
-            var rolePermissions = new List<RolePermission>
+            if (!existingAdminPerms.Contains(permId))
             {
-                // ADMIN (RoleId = 1) có tất cả quyền
-                new RolePermission { RoleId = 1, PermissionId = 1 },
-                new RolePermission { RoleId = 1, PermissionId = 2 },
-                new RolePermission { RoleId = 1, PermissionId = 3 },
-                new RolePermission { RoleId = 1, PermissionId = 4 },
-                new RolePermission { RoleId = 1, PermissionId = 5 },
-                new RolePermission { RoleId = 1, PermissionId = 6 },
-                new RolePermission { RoleId = 1, PermissionId = 7 },
-                new RolePermission { RoleId = 1, PermissionId = 8 },
-                new RolePermission { RoleId = 1, PermissionId = 9 },
-                new RolePermission { RoleId = 1, PermissionId = 10 },
+                adminPermissionsToAdd.Add(new RolePermission { RoleId = adminRoleId, PermissionId = permId });
+            }
+        }
+        if (adminPermissionsToAdd.Any())
+        {
+            context.RolePermissions.AddRange(adminPermissionsToAdd);
+            await context.SaveChangesAsync();
+        }
+        
+        // Seed Role Permissions cho các role khác nếu chưa có
+        if (!await context.RolePermissions.AnyAsync(rp => rp.RoleId != adminRoleId))
+        {
+            var rolePermissions = new List<RolePermission>();
                 
                 // SALES_EMPLOYEE (RoleId = 2) - Nhân viên bán hàng
-                new RolePermission { RoleId = 2, PermissionId = 1 }, // Đọc danh mục
-                new RolePermission { RoleId = 2, PermissionId = 3 }, // Đọc sách
-                new RolePermission { RoleId = 2, PermissionId = 5 }, // Đọc đơn đặt mua
-                new RolePermission { RoleId = 2, PermissionId = 7 }, // Đọc phiếu nhập
-                new RolePermission { RoleId = 2, PermissionId = 9 }, // Quản lý bán hàng
+            // Đọc: Category, Book, Publisher, Author, Purchase Order, Goods Receipt, Order, Customer, Cart, Payment, Invoice, Promotion, Return, Price Change, Report
+            rolePermissions.AddRange(new[]
+            {
+                new RolePermission { RoleId = 2, PermissionId = 1 },  // READ_CATEGORY
+                new RolePermission { RoleId = 2, PermissionId = 3 },  // READ_BOOK
+                new RolePermission { RoleId = 2, PermissionId = 5 },  // READ_PUBLISHER
+                new RolePermission { RoleId = 2, PermissionId = 7 },  // READ_AUTHOR
+                new RolePermission { RoleId = 2, PermissionId = 9 },  // READ_PURCHASE_ORDER
+                new RolePermission { RoleId = 2, PermissionId = 11 }, // READ_GOODS_RECEIPT
+                new RolePermission { RoleId = 2, PermissionId = 13 }, // READ_ORDER
+                new RolePermission { RoleId = 2, PermissionId = 17 }, // READ_CUSTOMER
+                new RolePermission { RoleId = 2, PermissionId = 19 }, // READ_CART
+                new RolePermission { RoleId = 2, PermissionId = 21 }, // READ_PAYMENT
+                new RolePermission { RoleId = 2, PermissionId = 23 }, // READ_INVOICE
+                new RolePermission { RoleId = 2, PermissionId = 25 }, // READ_PROMOTION
+                new RolePermission { RoleId = 2, PermissionId = 27 }, // READ_RETURN
+                new RolePermission { RoleId = 2, PermissionId = 29 }, // READ_PRICE_CHANGE
+                new RolePermission { RoleId = 2, PermissionId = 33 }, // READ_REPORT
+                new RolePermission { RoleId = 2, PermissionId = 38 }, // READ_AREA
+            });
+            
+            // Ghi: Order, Cart, Payment, Invoice, Promotion, Return, Price Change
+            rolePermissions.AddRange(new[]
+            {
+                new RolePermission { RoleId = 2, PermissionId = 14 }, // WRITE_ORDER
+                new RolePermission { RoleId = 2, PermissionId = 15 }, // APPROVE_ORDER
+                new RolePermission { RoleId = 2, PermissionId = 20 }, // WRITE_CART
+                new RolePermission { RoleId = 2, PermissionId = 22 }, // WRITE_PAYMENT
+                new RolePermission { RoleId = 2, PermissionId = 24 }, // WRITE_INVOICE
+                new RolePermission { RoleId = 2, PermissionId = 26 }, // WRITE_PROMOTION
+                new RolePermission { RoleId = 2, PermissionId = 28 }, // WRITE_RETURN
+                new RolePermission { RoleId = 2, PermissionId = 30 }, // WRITE_PRICE_CHANGE
+            });
                 
                 // DELIVERY_EMPLOYEE (RoleId = 3) - Nhân viên giao hàng
-                new RolePermission { RoleId = 3, PermissionId = 1 }, // Đọc danh mục
-                new RolePermission { RoleId = 3, PermissionId = 3 }, // Đọc sách
-                new RolePermission { RoleId = 3, PermissionId = 5 }, // Đọc đơn đặt mua
-                new RolePermission { RoleId = 3, PermissionId = 7 }, // Đọc phiếu nhập
-                new RolePermission { RoleId = 3, PermissionId = 10 }, // Quản lý giao hàng
-                
-                // CUSTOMER (RoleId = 4) chỉ có quyền đọc
-                new RolePermission { RoleId = 4, PermissionId = 1 }, // Đọc danh mục
-                new RolePermission { RoleId = 4, PermissionId = 3 }  // Đọc sách
-            };
+            // Đọc: Category, Book, Order, Customer, Area
+            rolePermissions.AddRange(new[]
+            {
+                new RolePermission { RoleId = 3, PermissionId = 1 },  // READ_CATEGORY
+                new RolePermission { RoleId = 3, PermissionId = 3 },  // READ_BOOK
+                new RolePermission { RoleId = 3, PermissionId = 13 }, // READ_ORDER
+                new RolePermission { RoleId = 3, PermissionId = 17 }, // READ_CUSTOMER
+                new RolePermission { RoleId = 3, PermissionId = 38 }, // READ_AREA
+            });
+            
+            // Ghi: Order (chỉ cập nhật trạng thái giao hàng), ASSIGN_DELIVERY
+            rolePermissions.AddRange(new[]
+            {
+                new RolePermission { RoleId = 3, PermissionId = 14 }, // WRITE_ORDER (chỉ để cập nhật trạng thái)
+                new RolePermission { RoleId = 3, PermissionId = 16 }, // ASSIGN_DELIVERY
+            });
+            
+            // CUSTOMER (RoleId = 4) - Khách hàng
+            // Đọc: Category, Book, Publisher, Author, Promotion (public)
+            rolePermissions.AddRange(new[]
+            {
+                new RolePermission { RoleId = 4, PermissionId = 1 },  // READ_CATEGORY
+                new RolePermission { RoleId = 4, PermissionId = 3 },  // READ_BOOK
+                new RolePermission { RoleId = 4, PermissionId = 5 },  // READ_PUBLISHER
+                new RolePermission { RoleId = 4, PermissionId = 7 },  // READ_AUTHOR
+                new RolePermission { RoleId = 4, PermissionId = 25 }, // READ_PROMOTION
+            });
+            
+            // Ghi: Cart (của chính mình), Order (tạo đơn của chính mình), Payment (thanh toán đơn của chính mình)
+            rolePermissions.AddRange(new[]
+            {
+                new RolePermission { RoleId = 4, PermissionId = 19 }, // READ_CART
+                new RolePermission { RoleId = 4, PermissionId = 20 }, // WRITE_CART
+                new RolePermission { RoleId = 4, PermissionId = 13 }, // READ_ORDER (chỉ đơn của mình)
+                new RolePermission { RoleId = 4, PermissionId = 14 }, // WRITE_ORDER (tạo đơn)
+                new RolePermission { RoleId = 4, PermissionId = 21 }, // READ_PAYMENT
+                new RolePermission { RoleId = 4, PermissionId = 22 }, // WRITE_PAYMENT
+            });
 
             context.RolePermissions.AddRange(rolePermissions);
             await context.SaveChangesAsync();

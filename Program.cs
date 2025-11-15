@@ -57,19 +57,87 @@ builder.Services.AddAuthorization(options =>
     bool HasPerm(System.Security.Claims.ClaimsPrincipal user, string perm)
         => user.HasClaim(c => c.Type == "permissions" && ($" {c.Value} ").Contains($" {perm} "));
 
+    // Category policies
     options.AddPolicy("PERM_READ_CATEGORY", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_CATEGORY")));
     options.AddPolicy("PERM_WRITE_CATEGORY", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_CATEGORY")));
+    
+    // Book policies
     options.AddPolicy("PERM_READ_BOOK", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_BOOK")));
     options.AddPolicy("PERM_WRITE_BOOK", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_BOOK")));
+    
+    // Publisher policies
+    options.AddPolicy("PERM_READ_PUBLISHER", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_PUBLISHER")));
+    options.AddPolicy("PERM_WRITE_PUBLISHER", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_PUBLISHER")));
+    
+    // Author policies
+    options.AddPolicy("PERM_READ_AUTHOR", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_AUTHOR")));
+    options.AddPolicy("PERM_WRITE_AUTHOR", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_AUTHOR")));
+    
+    // Purchase Order policies
     options.AddPolicy("PERM_READ_PO", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_PURCHASE_ORDER")));
     options.AddPolicy("PERM_WRITE_PO", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_PURCHASE_ORDER")));
+    
+    // Goods Receipt policies
     options.AddPolicy("PERM_READ_GR", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_GOODS_RECEIPT")));
     options.AddPolicy("PERM_WRITE_GR", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_GOODS_RECEIPT")));
-    // Employee/Department management permissions
+    
+    // Order policies
+    options.AddPolicy("PERM_READ_ORDER", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_ORDER")));
+    options.AddPolicy("PERM_WRITE_ORDER", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_ORDER")));
+    options.AddPolicy("PERM_APPROVE_ORDER", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "APPROVE_ORDER")));
+    options.AddPolicy("PERM_ASSIGN_DELIVERY", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "ASSIGN_DELIVERY")));
+    
+    // Customer policies
+    options.AddPolicy("PERM_READ_CUSTOMER", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_CUSTOMER")));
+    options.AddPolicy("PERM_WRITE_CUSTOMER", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_CUSTOMER")));
+    
+    // Cart policies
+    options.AddPolicy("PERM_READ_CART", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_CART")));
+    options.AddPolicy("PERM_WRITE_CART", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_CART")));
+    
+    // Payment policies
+    options.AddPolicy("PERM_READ_PAYMENT", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_PAYMENT")));
+    options.AddPolicy("PERM_WRITE_PAYMENT", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_PAYMENT")));
+    
+    // Invoice policies
+    options.AddPolicy("PERM_READ_INVOICE", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_INVOICE")));
+    options.AddPolicy("PERM_WRITE_INVOICE", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_INVOICE")));
+    
+    // Promotion policies
+    options.AddPolicy("PERM_READ_PROMOTION", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_PROMOTION")));
+    options.AddPolicy("PERM_WRITE_PROMOTION", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_PROMOTION")));
+    
+    // Return policies
+    options.AddPolicy("PERM_READ_RETURN", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_RETURN")));
+    options.AddPolicy("PERM_WRITE_RETURN", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_RETURN")));
+    
+    // Price Change policies
+    options.AddPolicy("PERM_READ_PRICE_CHANGE", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_PRICE_CHANGE")));
+    options.AddPolicy("PERM_WRITE_PRICE_CHANGE", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_PRICE_CHANGE")));
+    
+    // Expense policies
+    options.AddPolicy("PERM_READ_EXPENSE", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_EXPENSE")));
+    options.AddPolicy("PERM_WRITE_EXPENSE", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_EXPENSE")));
+    
+    // Report policies
+    options.AddPolicy("PERM_READ_REPORT", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_REPORT")));
+    
+    // Employee policies
     options.AddPolicy("PERM_READ_EMPLOYEE", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_EMPLOYEE")));
     options.AddPolicy("PERM_WRITE_EMPLOYEE", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_EMPLOYEE")));
+    
+    // Department policies
     options.AddPolicy("PERM_READ_DEPARTMENT", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_DEPARTMENT")));
     options.AddPolicy("PERM_WRITE_DEPARTMENT", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_DEPARTMENT")));
+    
+    // Area policies
+    options.AddPolicy("PERM_READ_AREA", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_AREA")));
+    options.AddPolicy("PERM_WRITE_AREA", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_AREA")));
+    
+    // Role & Permission policies
+    options.AddPolicy("PERM_READ_ROLE", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "READ_ROLE")));
+    options.AddPolicy("PERM_WRITE_ROLE", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "WRITE_ROLE")));
+    options.AddPolicy("PERM_ASSIGN_PERMISSION", p => p.RequireAssertion(ctx => HasPerm(ctx.User, "ASSIGN_PERMISSION")));
 });
 
 // CORS Configuration
@@ -212,8 +280,8 @@ using (var scope = app.Services.CreateScope())
     var context = scope.ServiceProvider.GetRequiredService<BookStoreDbContext>();
     context.Database.EnsureCreated();
     
-    // Seed data
-    await SeedData.SeedAsync(context);
+    // Seed data - Đã tắt, dùng file seed_data.sql để seed thủ công
+    // await SeedData.SeedAsync(context);
 }
 
 // Configure the HTTP request pipeline.

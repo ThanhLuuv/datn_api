@@ -7,7 +7,7 @@ namespace BookStore.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class RoleController : ControllerBase
 {
 	private readonly IRoleService _roleService;
@@ -21,6 +21,7 @@ public class RoleController : ControllerBase
 	/// Danh sách role
 	/// </summary>
 	[HttpGet]
+	[Authorize(Policy = "PERM_READ_ROLE")]
 	public async Task<ActionResult<ApiResponse<List<RoleDto>>>> GetRoles()
 	{
 		var result = await _roleService.GetRolesAsync();
@@ -32,6 +33,7 @@ public class RoleController : ControllerBase
 	/// Danh sách tất cả quyền
 	/// </summary>
 	[HttpGet("permissions")]
+	[Authorize(Policy = "PERM_READ_ROLE")]
 	public async Task<ActionResult<ApiResponse<List<PermissionDto>>>> GetPermissions()
 	{
 		var result = await _roleService.GetPermissionsAsync();
@@ -43,6 +45,7 @@ public class RoleController : ControllerBase
 	/// Lấy quyền theo role
 	/// </summary>
 	[HttpGet("{roleId}/permissions")]
+	[Authorize(Policy = "PERM_READ_ROLE")]
 	public async Task<ActionResult<ApiResponse<RoleDto>>> GetRolePermissions(long roleId)
 	{
 		var result = await _roleService.GetRoleWithPermissionsAsync(roleId);
@@ -54,6 +57,7 @@ public class RoleController : ControllerBase
 	/// Gán quyền cho role
 	/// </summary>
 	[HttpPost("assign")]
+	[Authorize(Policy = "PERM_ASSIGN_PERMISSION")]
 	public async Task<ActionResult<ApiResponse<bool>>> Assign([FromBody] AssignPermissionRequest req)
 	{
 		var result = await _roleService.AssignPermissionAsync(req.RoleId, req.PermissionId);
@@ -65,6 +69,7 @@ public class RoleController : ControllerBase
 	/// Bỏ quyền khỏi role
 	/// </summary>
 	[HttpPost("remove")]
+	[Authorize(Policy = "PERM_ASSIGN_PERMISSION")]
 	public async Task<ActionResult<ApiResponse<bool>>> Remove([FromBody] AssignPermissionRequest req)
 	{
 		var result = await _roleService.RemovePermissionAsync(req.RoleId, req.PermissionId);

@@ -1,6 +1,8 @@
 using BookStore.Api.DTOs;
 using BookStore.Api.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace BookStore.Api.Controllers;
 
@@ -72,6 +74,36 @@ public class AuthController : ControllerBase
         }
 
         var result = await _authService.LoginAsync(loginDto);
+        
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+
+        return BadRequest(result);
+    }
+
+    /// <summary>
+    /// Refresh token - Lấy token mới với permissions mới nhất
+    /// </summary>
+    /// <returns>Token mới với permissions đầy đủ</returns>
+    [HttpPost("refresh-token")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<AuthResponseDto>>> RefreshToken()
+    {
+        var email = User.FindFirst(ClaimTypes.Email)?.Value ?? User.FindFirst("email")?.Value;
+        
+        if (string.IsNullOrEmpty(email))
+        {
+            return Unauthorized(new ApiResponse<AuthResponseDto>
+            {
+                Success = false,
+                Message = "Không thể xác định người dùng",
+                Errors = new List<string> { "Token không hợp lệ" }
+            });
+        }
+
+        var result = await _authService.RefreshTokenAsync(email);
         
         if (result.Success)
         {

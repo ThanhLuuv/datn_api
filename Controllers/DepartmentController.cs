@@ -7,7 +7,7 @@ namespace BookStore.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "ADMIN")]
+[Authorize]
 public class DepartmentController : ControllerBase
 {
     private readonly IDepartmentService _departmentService;
@@ -18,6 +18,7 @@ public class DepartmentController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = "PERM_READ_DEPARTMENT")]
     public async Task<ActionResult<ApiResponse<DepartmentListResponse>>> GetDepartments([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 10, [FromQuery] string? searchTerm = null)
     {
         var result = await _departmentService.GetDepartmentsAsync(pageNumber, pageSize, searchTerm);
@@ -26,6 +27,7 @@ public class DepartmentController : ControllerBase
     }
 
     [HttpGet("{departmentId}")]
+    [Authorize(Policy = "PERM_READ_DEPARTMENT")]
     public async Task<ActionResult<ApiResponse<DepartmentDto>>> GetDepartment(long departmentId)
     {
         var result = await _departmentService.GetDepartmentByIdAsync(departmentId);
@@ -34,6 +36,7 @@ public class DepartmentController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = "PERM_WRITE_DEPARTMENT")]
     public async Task<ActionResult<ApiResponse<DepartmentDto>>> CreateDepartment([FromBody] CreateDepartmentDto request)
     {
         if (!ModelState.IsValid)
@@ -48,6 +51,7 @@ public class DepartmentController : ControllerBase
     }
 
     [HttpPut("{departmentId}")]
+    [Authorize(Policy = "PERM_WRITE_DEPARTMENT")]
     public async Task<ActionResult<ApiResponse<DepartmentDto>>> UpdateDepartment(long departmentId, [FromBody] UpdateDepartmentDto request)
     {
         if (!ModelState.IsValid)
@@ -62,6 +66,7 @@ public class DepartmentController : ControllerBase
     }
 
     [HttpDelete("{departmentId}")]
+    [Authorize(Policy = "PERM_WRITE_DEPARTMENT")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteDepartment(long departmentId)
     {
         var result = await _departmentService.DeleteDepartmentAsync(departmentId);

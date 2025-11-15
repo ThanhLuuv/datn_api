@@ -9,7 +9,7 @@ namespace BookStore.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "ADMIN,EMPLOYEE")]
+[Authorize(Policy = "PERM_READ_REPORT")]
 public class ReportController : ControllerBase
 {
     private readonly IReportService _reportService;
