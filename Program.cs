@@ -172,7 +172,7 @@ builder.Services.AddScoped<IExpenseService, ExpenseService>();
 builder.Services.AddScoped<IEmployeeService, EmployeeService>();
 builder.Services.AddScoped<IDepartmentService, DepartmentService>();
 
-// AI services (OpenAI GPT‑4o integration)
+// AI services (Gemini integration)
 builder.Services.AddHttpClient<IAiService, AiService>();
 
 // Health Checks

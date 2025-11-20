@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using BookStore.Api.Data;
@@ -16,7 +15,7 @@ public class AiService : IAiService
     private readonly HttpClient _httpClient;
     private readonly ILogger<AiService> _logger;
 
-    private const string DefaultModel = "gpt-4o";
+    private const string DefaultModel = "gemini-2.5-flash";
 
     public AiService(
         BookStoreDbContext db,
@@ -144,7 +143,7 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ theo schema:
             candidates = candidatePayload
         };
 
-        var aiResultJson = await CallOpenAiAsync(
+        var aiResultJson = await CallGeminiAsync(
             systemPrompt,
             JsonSerializer.Serialize(userPrompt),
             cancellationToken);
@@ -357,7 +356,7 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
   ""customerFeedbackSummary"": ""tổng hợp các ý chính từ đánh giá và gợi ý cải thiện""
 }";
 
-        var aiResultJson = await CallOpenAiAsync(
+        var aiResultJson = await CallGeminiAsync(
             systemPrompt,
             JsonSerializer.Serialize(payload),
             cancellationToken);
@@ -450,35 +449,48 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
     }
 
     /// <summary>
-    /// Gọi OpenAI Chat Completion (gpt‑4o) với system + user prompt. Trả về phần nội dung text của message đầu tiên.
+    /// Gọi Google Gemini (Generative Language API) với system + user prompt. Trả về nội dung text đầu tiên.
     /// </summary>
-    private async Task<string?> CallOpenAiAsync(string systemPrompt, string userPayload, CancellationToken cancellationToken)
+    private async Task<string?> CallGeminiAsync(string systemPrompt, string userPayload, CancellationToken cancellationToken)
     {
-        var apiKey = _configuration["OpenAI:ApiKey"];
+        var apiKey = _configuration["Gemini:ApiKey"];
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            _logger.LogWarning("OpenAI:ApiKey is not configured.");
+            _logger.LogWarning("Gemini:ApiKey is not configured.");
             return null;
         }
 
-        var model = _configuration["OpenAI:Model"] ?? DefaultModel;
-        var baseUrl = _configuration["OpenAI:BaseUrl"]?.TrimEnd('/') ?? "https://api.openai.com";
-
-        var url = $"{baseUrl}/v1/chat/completions";
+        var model = _configuration["Gemini:Model"] ?? DefaultModel;
+        var baseUrl = _configuration["Gemini:BaseUrl"]?.TrimEnd('/') ?? "https://generativelanguage.googleapis.com";
+        var url = $"{baseUrl}/v1beta/models/{model}:generateContent?key={apiKey}";
 
         using var requestMessage = new HttpRequestMessage(HttpMethod.Post, url);
-        requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
         var body = new
         {
-            model,
-            messages = new[]
+            systemInstruction = new
             {
-                new { role = "system", content = systemPrompt },
-                new { role = "user", content = userPayload }
+                parts = new[]
+                {
+                    new { text = systemPrompt }
+                }
             },
-            temperature = 0.7,
-            response_format = new { type = "json_object" }
+            contents = new[]
+            {
+                new
+                {
+                    role = "user",
+                    parts = new[]
+                    {
+                        new { text = userPayload }
+                    }
+                }
+            },
+            generationConfig = new
+            {
+                temperature = 0.7,
+                responseMimeType = "application/json"
+            }
         };
 
         requestMessage.Content = new StringContent(
@@ -493,26 +505,48 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("OpenAI API error {StatusCode}: {Content}", response.StatusCode, content);
+                _logger.LogWarning("Gemini API error {StatusCode}: {Content}", response.StatusCode, content);
                 return null;
             }
 
             using var doc = JsonDocument.Parse(content);
             var root = doc.RootElement;
 
-            var choices = root.GetProperty("choices");
-            if (choices.GetArrayLength() == 0)
+            if (!root.TryGetProperty("candidates", out var candidates) || candidates.ValueKind != JsonValueKind.Array || candidates.GetArrayLength() == 0)
             {
                 return null;
             }
 
-            var message = choices[0].GetProperty("message");
-            var messageContent = message.GetProperty("content").GetString();
-            return messageContent;
+            foreach (var candidate in candidates.EnumerateArray())
+            {
+                if (!candidate.TryGetProperty("content", out var candidateContent))
+                {
+                    continue;
+                }
+
+                if (!candidateContent.TryGetProperty("parts", out var parts) || parts.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                foreach (var part in parts.EnumerateArray())
+                {
+                    if (part.TryGetProperty("text", out var textProp) && textProp.ValueKind == JsonValueKind.String)
+                    {
+                        var text = textProp.GetString();
+                        if (!string.IsNullOrWhiteSpace(text))
+                        {
+                            return text;
+                        }
+                    }
+                }
+            }
+
+            return null;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error calling OpenAI API");
+            _logger.LogError(ex, "Error calling Gemini API");
             return null;
         }
     }
