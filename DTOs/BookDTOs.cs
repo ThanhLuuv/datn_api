@@ -26,6 +26,16 @@ public class BookDto
     public int? TotalSold { get; set; }
     public List<AuthorDto> Authors { get; set; } = new List<AuthorDto>();
     public List<BookPromotionDto> ActivePromotions { get; set; } = new List<BookPromotionDto>();
+
+    /// <summary>
+    /// Tóm tắt / đánh giá sản phẩm do AI sinh ra (tuỳ chọn, chỉ có ở các API AI).
+    /// </summary>
+    public string? AiSummary { get; set; }
+
+    /// <summary>
+    /// Lý do AI cho rằng cuốn sách này phù hợp với nhu cầu (tuỳ chọn).
+    /// </summary>
+    public string? AiReason { get; set; }
 }
 
 

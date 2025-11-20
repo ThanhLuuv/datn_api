@@ -172,6 +172,9 @@ builder.Services.AddScoped<IExpenseService, ExpenseService>();
 builder.Services.AddScoped<IEmployeeService, EmployeeService>();
 builder.Services.AddScoped<IDepartmentService, DepartmentService>();
 
+// AI services (OpenAI GPT‑4o integration)
+builder.Services.AddHttpClient<IAiService, AiService>();
+
 // Health Checks
 builder.Services.AddHealthChecks()
     .AddMySql(builder.Configuration.GetConnectionString("DefaultConnection")!)
