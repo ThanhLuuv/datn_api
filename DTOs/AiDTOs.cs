@@ -91,6 +91,127 @@ public class AdminAiBookSuggestion
     /// Lý do gợi ý (ví dụ: đang bán chạy, được đánh giá cao, thiếu hàng,...).
     /// </summary>
     public string Reason { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Giá thị trường tham khảo (từ các sàn TMĐT / nhà sách khác).
+    /// </summary>
+    public string? MarketPrice { get; set; }
+
+    /// <summary>
+    /// Tên nguồn / sàn thương mại điện tử cung cấp giá.
+    /// </summary>
+    public string? MarketSourceName { get; set; }
+
+    /// <summary>
+    /// Đường dẫn nguồn giá (nếu có).
+    /// </summary>
+    public string? MarketSourceUrl { get; set; }
+
+    /// <summary>
+    /// ISBN đề xuất (đảm bảo duy nhất trong hệ thống).
+    /// </summary>
+    public string? SuggestedIsbn { get; set; }
+
+    /// <summary>
+    /// Mã danh mục gợi ý (matching DB category khi có).
+    /// </summary>
+    public string? SuggestedCategoryId { get; set; }
+
+    /// <summary>
+    /// Tên tác giả chính (AI tự động đề xuất).
+    /// </summary>
+    public string? AuthorName { get; set; }
+
+    /// <summary>
+    /// Tên nhà xuất bản (AI đề xuất).
+    /// </summary>
+    public string? PublisherName { get; set; }
+
+    /// <summary>
+    /// Số trang tham khảo.
+    /// </summary>
+    public int? PageCount { get; set; }
+
+    /// <summary>
+    /// Giá bán đề xuất trong hệ thống (VNĐ).
+    /// </summary>
+    public decimal? SuggestedPrice { get; set; }
+
+    /// <summary>
+    /// Mô tả / tóm tắt nội dung sách.
+    /// </summary>
+    public string? Description { get; set; }
+
+    /// <summary>
+    /// URL ảnh bìa được AI tìm kiếm và đề xuất.
+    /// </summary>
+    public string? CoverImageUrl { get; set; }
+
+    /// <summary>
+    /// Năm xuất bản gợi ý.
+    /// </summary>
+    public int? PublishYear { get; set; }
+
+    /// <summary>
+    /// Số lượng tồn kho muốn đặt ban đầu.
+    /// </summary>
+    public int? SuggestedStock { get; set; }
+}
+
+public class AdminAiImportBookRequest
+{
+    [Required]
+    public string Title { get; set; } = string.Empty;
+
+    public string? Isbn { get; set; }
+
+    public long? CategoryId { get; set; }
+    public string? CategoryName { get; set; }
+
+    public long? PublisherId { get; set; }
+    public string? PublisherName { get; set; }
+
+    public string? AuthorName { get; set; }
+
+    public int? PageCount { get; set; }
+    public int? PublishYear { get; set; }
+
+    public decimal? SuggestedPrice { get; set; }
+    public int? Stock { get; set; }
+
+    public string? CoverImageUrl { get; set; }
+    public string? Description { get; set; }
+}
+
+public class AdminAiImportBookResponse
+{
+    public BookDto Book { get; set; } = new();
+}
+
+public class AdminAiVoiceRequest
+{
+    [Required]
+    public string AudioBase64 { get; set; } = string.Empty;
+
+    public string? MimeType { get; set; }
+
+    public DateTime? FromDate { get; set; }
+    public DateTime? ToDate { get; set; }
+
+    [MaxLength(8)]
+    public string Language { get; set; } = "vi";
+
+    public bool IncludeInventorySnapshot { get; set; } = true;
+    public bool IncludeCategoryShare { get; set; } = true;
+}
+
+public class AdminAiVoiceResponse
+{
+    public string? Transcript { get; set; }
+    public string? AnswerText { get; set; }
+    public string? AudioBase64 { get; set; }
+    public string? AudioMimeType { get; set; }
+    public List<string> DataSources { get; set; } = new();
 }
 
 public class AdminAiChatMessage

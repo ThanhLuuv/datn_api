@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using BookStore.Api.Data;
@@ -441,6 +442,58 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
             response.Overview = "Không thể parse JSON từ AI. Nội dung thô:\n" + aiResultJson;
         }
 
+        if (response.BookSuggestions.Count > 0)
+        {
+            var priceMap = await FetchMarketPriceInsightsAsync(
+                response.BookSuggestions.Select(s => s.Title),
+                cancellationToken);
+
+            foreach (var suggestion in response.BookSuggestions)
+            {
+                var key = NormalizeTitleKey(suggestion.Title);
+                if (!string.IsNullOrEmpty(key) && priceMap.TryGetValue(key, out var priceInfo))
+                {
+                    suggestion.MarketPrice = string.IsNullOrWhiteSpace(priceInfo.MarketPrice)
+                        ? null
+                        : priceInfo.MarketPrice;
+                    suggestion.MarketSourceName = string.IsNullOrWhiteSpace(priceInfo.SourceName)
+                        ? null
+                        : priceInfo.SourceName;
+                    suggestion.MarketSourceUrl = string.IsNullOrWhiteSpace(priceInfo.SourceUrl)
+                        ? null
+                        : priceInfo.SourceUrl;
+                }
+            }
+        }
+
+        if (response.BookSuggestions.Count > 0)
+        {
+            await EnrichBookSuggestionsAsync(response.BookSuggestions, cancellationToken);
+
+            var priceMap = await FetchMarketPriceInsightsAsync(
+                response.BookSuggestions.Select(s => s.Title),
+                cancellationToken);
+
+            foreach (var suggestion in response.BookSuggestions)
+            {
+                var key = NormalizeTitleKey(suggestion.Title);
+                if (!string.IsNullOrEmpty(key) && priceMap.TryGetValue(key, out var priceInfo))
+                {
+                    suggestion.MarketPrice = string.IsNullOrWhiteSpace(priceInfo.MarketPrice)
+                        ? suggestion.MarketPrice
+                        : priceInfo.MarketPrice;
+                    suggestion.MarketSourceName = string.IsNullOrWhiteSpace(priceInfo.SourceName)
+                        ? suggestion.MarketSourceName
+                        : priceInfo.SourceName;
+                    suggestion.MarketSourceUrl = string.IsNullOrWhiteSpace(priceInfo.SourceUrl)
+                        ? suggestion.MarketSourceUrl
+                        : priceInfo.SourceUrl;
+                }
+
+                suggestion.SuggestedIsbn ??= await GenerateUniqueIsbnAsync(null, cancellationToken);
+            }
+        }
+
         return new ApiResponse<AdminAiAssistantResponse>
         {
             Success = true,
@@ -498,6 +551,384 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
             : request.Language.Trim().ToLowerInvariant();
         var languageLabel = language == "vi" ? "tiếng Việt" : "ngôn ngữ đã yêu cầu";
 
+        var (dataPayload, dataSources) = await BuildAdminDataSnapshotAsync(
+            from,
+            to,
+            request.IncludeInventorySnapshot,
+            request.IncludeCategoryShare,
+            cancellationToken);
+
+        var systemPrompt = $@"Bạn là trợ lý dữ liệu thời gian thực cho quản trị viên BookStore.
+            Bạn được cung cấp dữ liệu JSON (profitReport, revenueReport, inventorySnapshot, categoryShare) và lịch sử hội thoại của admin.
+            Nhiệm vụ:
+            - Trả lời câu hỏi dựa trên dữ liệu thực tế, không được đoán.
+            - Luôn ghi rõ các chỉ số chính (doanh thu, lợi nhuận, tồn kho...) nếu liên quan.
+            - Đề xuất hành động cụ thể (ví dụ: ""Lọc báo cáo tồn kho ngày hôm nay"", ""Xuất báo cáo doanh thu theo quý"", ...).
+            - Nếu dữ liệu thiếu, hãy nói rõ và đề xuất bước tiếp theo.
+            Định dạng câu trả lời: tối đa 4 đoạn/bullet, rõ ràng, bằng {languageLabel}.
+            ";
+
+        var userPayload = new
+        {
+            question = lastUserMessage.Content,
+            conversation = trimmedHistory,
+            dataset = dataPayload,
+            expectedOutput = new
+            {
+                language,
+                sections = new[]
+                {
+                    "overview",
+                    "metrics",
+                    "insights",
+                    "recommendedActions"
+                },
+                mentionDataSources = true
+            }
+        };
+
+        var aiResultJson = await CallGeminiAsync(
+            systemPrompt,
+            JsonSerializer.Serialize(userPayload),
+            cancellationToken);
+
+        if (aiResultJson == null)
+        {
+            return new ApiResponse<AdminAiChatResponse>
+            {
+                Success = false,
+                Message = "Không thể kết nối tới dịch vụ AI để trả lời câu hỏi.",
+                Errors = new List<string> { "AI service unavailable" }
+            };
+        }
+
+        var assistantMessage = new AdminAiChatMessage
+        {
+            Role = "assistant",
+            Content = aiResultJson
+        };
+
+        var updatedMessages = request.Messages
+            .Select(m => new AdminAiChatMessage
+            {
+                Role = m.Role,
+                Content = m.Content
+            })
+            .ToList();
+        updatedMessages.Add(assistantMessage);
+
+        return new ApiResponse<AdminAiChatResponse>
+        {
+            Success = true,
+            Message = "Trả lời thành công",
+            Data = new AdminAiChatResponse
+            {
+                Messages = updatedMessages,
+                PlainTextAnswer = aiResultJson,
+                MarkdownAnswer = aiResultJson,
+                DataSources = dataSources.ToList(),
+                Insights = new Dictionary<string, object>
+                {
+                    ["timeframe"] = new { fromUtc = from, toUtc = to },
+                    ["dataSources"] = dataSources.ToList()
+                }
+            }
+        };
+    }
+
+    public async Task<ApiResponse<AdminAiVoiceResponse>> GetAdminVoiceAnswerAsync(
+        AdminAiVoiceRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.AudioBase64))
+        {
+            return new ApiResponse<AdminAiVoiceResponse>
+            {
+                Success = false,
+                Message = "Thiếu dữ liệu audio",
+                Errors = new List<string> { "AudioBase64 is required" }
+            };
+        }
+
+        var from = request.FromDate ?? DateTime.UtcNow.AddDays(-30);
+        var to = request.ToDate ?? DateTime.UtcNow;
+        if (to < from)
+        {
+            (from, to) = (to, from);
+        }
+
+        var (dataPayload, dataSources) = await BuildAdminDataSnapshotAsync(
+            from,
+            to,
+            request.IncludeInventorySnapshot,
+            request.IncludeCategoryShare,
+            cancellationToken);
+
+        var language = string.IsNullOrWhiteSpace(request.Language)
+            ? "vi"
+            : request.Language.Trim().ToLowerInvariant();
+        var languageLabel = language == "vi" ? "tiếng Việt" : "ngôn ngữ đã yêu cầu";
+        var voiceName = Environment.GetEnvironmentVariable("Gemini__Voice")
+            ?? _configuration["Gemini:Voice"]
+            ?? "Zephyr";
+        var mimeType = string.IsNullOrWhiteSpace(request.MimeType)
+            ? "audio/webm"
+            : request.MimeType!;
+
+        var contextPayload = new
+        {
+            dataset = dataPayload,
+            language,
+            expectations = new[]
+            {
+                "Trả lời dựa trên dữ liệu thật (profitReport, revenueReport, inventorySnapshot, categoryShare).",
+                "Nếu dữ liệu thiếu thì nói rõ và đề xuất bước tiếp theo.",
+                "Câu trả lời nói tối đa 45 giây, giọng tự tin, chuyên nghiệp."
+            }
+        };
+
+        var systemPrompt = $@"Bạn là trợ lý dữ liệu giọng nói cho quản trị viên BookStore.
+- Phân tích câu hỏi của admin và dùng dữ liệu được cung cấp (dataset JSON).
+- Ưu tiên nêu con số chính xác (doanh thu, lợi nhuận, lượng tồn).
+- Đề xuất hành động cụ thể sau khi trả lời.
+- Giữ câu trả lời ngắn gọn, rõ ràng bằng {languageLabel}.";
+
+        var body = new
+        {
+            systemInstruction = new
+            {
+                parts = new[]
+                {
+                    new { text = systemPrompt }
+                }
+            },
+            contents = new[]
+            {
+                new
+                {
+                    role = "user",
+                    parts = new object[]
+                    {
+                        new
+                        {
+                            inline_data = new
+                            {
+                                mime_type = mimeType,
+                                data = request.AudioBase64
+                            }
+                        },
+                        new
+                        {
+                            text = JsonSerializer.Serialize(contextPayload)
+                        }
+                    }
+                }
+            },
+            responseModalities = new[] { "AUDIO" },
+            generationConfig = new
+            {
+                temperature = 0.35,
+                candidateCount = 1,
+                responseMimeType = "application/json",
+                speechConfig = new
+                {
+                    voiceConfig = new
+                    {
+                        prebuiltVoiceConfig = new
+                        {
+                            voiceName
+                        }
+                    }
+                }
+            }
+        };
+
+        var doc = await CallGeminiCustomAsync(body, null, null, null, cancellationToken);
+        if (doc == null)
+        {
+            return new ApiResponse<AdminAiVoiceResponse>
+            {
+                Success = false,
+                Message = "Không thể gọi dịch vụ AI voice.",
+                Errors = new List<string> { "AI service unavailable" }
+            };
+        }
+
+        string? answerText = null;
+        string? transcript = null;
+        string? audioBase64 = null;
+        string? audioMimeType = null;
+
+        using (doc)
+        {
+            if (doc.RootElement.TryGetProperty("candidates", out var candidates) && candidates.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var candidate in candidates.EnumerateArray())
+                {
+                    if (candidate.TryGetProperty("content", out var content) && content.TryGetProperty("parts", out var parts))
+                    {
+                        foreach (var part in parts.EnumerateArray())
+                        {
+                            if (part.TryGetProperty("text", out var textProp) && textProp.ValueKind == JsonValueKind.String)
+                            {
+                                answerText ??= textProp.GetString();
+                            }
+
+                            if (part.TryGetProperty("inlineData", out var inlineData))
+                            {
+                                audioBase64 ??= inlineData.TryGetProperty("data", out var dataProp) ? dataProp.GetString() : null;
+                                audioMimeType ??= inlineData.TryGetProperty("mimeType", out var mimeProp) ? mimeProp.GetString() : null;
+                            }
+                        }
+                    }
+
+                    if (candidate.TryGetProperty("metadata", out var metadata))
+                    {
+                        if (metadata.TryGetProperty("outputAudioTranscription", out var transcriptionObj) &&
+                            transcriptionObj.TryGetProperty("text", out var transcriptProp) &&
+                            transcriptProp.ValueKind == JsonValueKind.String)
+                        {
+                            transcript = transcriptProp.GetString();
+                        }
+                    }
+                }
+            }
+        }
+
+        transcript ??= answerText;
+
+        if (string.IsNullOrWhiteSpace(audioBase64))
+        {
+            _logger.LogWarning("Gemini voice response missing audio data.");
+            return new ApiResponse<AdminAiVoiceResponse>
+            {
+                Success = false,
+                Message = "AI không trả về dữ liệu audio.",
+                Errors = new List<string> { "missing_audio" }
+            };
+        }
+
+        return new ApiResponse<AdminAiVoiceResponse>
+        {
+            Success = true,
+            Message = "Voice assistant trả lời thành công",
+            Data = new AdminAiVoiceResponse
+            {
+                Transcript = transcript,
+                AnswerText = answerText,
+                AudioBase64 = audioBase64,
+                AudioMimeType = audioMimeType ?? "audio/wav",
+                DataSources = dataSources.ToList()
+            }
+        };
+    }
+
+    public async Task<ApiResponse<AdminAiImportBookResponse>> ImportAiSuggestedBookAsync(
+        AdminAiImportBookRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Title))
+        {
+            return new ApiResponse<AdminAiImportBookResponse>
+            {
+                Success = false,
+                Message = "Tiêu đề sách không được để trống",
+                Errors = new List<string> { "Title is required" }
+            };
+        }
+
+        var isbn = await GenerateUniqueIsbnAsync(request.Isbn, cancellationToken);
+        var categoryId = await ResolveOrCreateCategoryAsync(request.CategoryId, request.CategoryName, cancellationToken);
+        var publisherId = await ResolveOrCreatePublisherAsync(request.PublisherId, request.PublisherName, cancellationToken);
+        var author = await ResolveOrCreateAuthorAsync(request.AuthorName, cancellationToken);
+
+        if (categoryId == null)
+        {
+            return new ApiResponse<AdminAiImportBookResponse>
+            {
+                Success = false,
+                Message = "Không thể xác định danh mục cho sách này",
+                Errors = new List<string> { "Category not found" }
+            };
+        }
+
+        if (publisherId == null)
+        {
+            return new ApiResponse<AdminAiImportBookResponse>
+            {
+                Success = false,
+                Message = "Không thể xác định nhà xuất bản",
+                Errors = new List<string> { "Publisher not found" }
+            };
+        }
+
+        var pageCount = Math.Max(request.PageCount ?? 220, 30);
+        var publishYear = request.PublishYear ?? DateTime.UtcNow.Year;
+        var price = Math.Max(request.SuggestedPrice ?? 100_000m, 10_000m);
+        var stock = Math.Max(request.Stock ?? 0, 0);
+
+        var book = new Book
+        {
+            Isbn = isbn,
+            Title = request.Title.Trim(),
+            PageCount = pageCount,
+            AveragePrice = price,
+            PublishYear = publishYear,
+            CategoryId = categoryId.Value,
+            PublisherId = publisherId.Value,
+            ImageUrl = request.CoverImageUrl,
+            Stock = stock,
+            Status = true,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+
+        _db.Books.Add(book);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        if (author != null)
+        {
+            _db.Set<AuthorBook>().Add(new AuthorBook
+            {
+                AuthorId = author.AuthorId,
+                Isbn = book.Isbn
+            });
+
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+
+        var created = await _db.Books
+            .Include(b => b.Category)
+            .Include(b => b.Publisher)
+            .Include(b => b.AuthorBooks)
+                .ThenInclude(ab => ab.Author)
+            .FirstAsync(b => b.Isbn == book.Isbn, cancellationToken);
+
+        var dto = MapBookToDto(created);
+        dto.AiSummary = request.Description;
+
+        return new ApiResponse<AdminAiImportBookResponse>
+        {
+            Success = true,
+            Message = "Tạo sách mới thành công",
+            Data = new AdminAiImportBookResponse
+            {
+                Book = dto
+            }
+        };
+    }
+
+    private async Task<(object Snapshot, HashSet<string> DataSources)> BuildAdminDataSnapshotAsync(
+        DateTime from,
+        DateTime to,
+        bool includeInventorySnapshot,
+        bool includeCategoryShare,
+        CancellationToken cancellationToken)
+    {
         var dataSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         ProfitReportDto? profitReport = null;
@@ -529,7 +960,7 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
         }
 
         InventoryReportResponse? inventorySnapshot = null;
-        if (request.IncludeInventorySnapshot)
+        if (includeInventorySnapshot)
         {
             var inventoryResult = await _reportService.GetInventoryAsOfDateAsync(to.Date);
             if (inventoryResult.Success && inventoryResult.Data != null)
@@ -544,7 +975,7 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
         }
 
         BooksByCategoryResponse? categoryShare = null;
-        if (request.IncludeCategoryShare)
+        if (includeCategoryShare)
         {
             var categoryResult = await _reportService.GetBooksByCategoryAsync();
             if (categoryResult.Success && categoryResult.Data != null)
@@ -650,7 +1081,7 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
                     .ToList()
             };
 
-        var dataPayload = new
+        var snapshot = new
         {
             timeframe = new
             {
@@ -664,82 +1095,510 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
             categoryShare = categoryPayload
         };
 
-        var systemPrompt = $@"Bạn là trợ lý dữ liệu thời gian thực cho quản trị viên BookStore.
-Bạn được cung cấp dữ liệu JSON (profitReport, revenueReport, inventorySnapshot, categoryShare) và lịch sử hội thoại của admin.
-Nhiệm vụ:
-- Trả lời câu hỏi dựa trên dữ liệu thực tế, không được đoán.
-- Luôn ghi rõ các chỉ số chính (doanh thu, lợi nhuận, tồn kho...) nếu liên quan.
-- Đề xuất hành động cụ thể (ví dụ: ""Lọc báo cáo tồn kho ngày hôm nay"", ""Xuất báo cáo doanh thu theo quý"", ...).
-- Nếu dữ liệu thiếu, hãy nói rõ và đề xuất bước tiếp theo.
-Định dạng câu trả lời: tối đa 4 đoạn/bullet, rõ ràng, bằng {languageLabel}.
-";
+        return (snapshot, dataSources);
+    }
+
+    private async Task EnrichBookSuggestionsAsync(
+        List<AdminAiBookSuggestion> suggestions,
+        CancellationToken cancellationToken)
+    {
+        foreach (var suggestion in suggestions)
+        {
+            if (string.IsNullOrWhiteSpace(suggestion.Title))
+            {
+                continue;
+            }
+
+            var enrichment = await FetchBookMetadataAsync(suggestion.Title, cancellationToken);
+            if (enrichment == null)
+            {
+                suggestion.SuggestedIsbn ??= await GenerateUniqueIsbnAsync(null, cancellationToken);
+                continue;
+            }
+
+            suggestion.Description ??= enrichment.Description;
+            suggestion.AuthorName ??= enrichment.AuthorName;
+            suggestion.PublisherName ??= enrichment.PublisherName;
+            suggestion.PageCount ??= enrichment.PageCount;
+            suggestion.SuggestedPrice ??= enrichment.PriceVnd;
+            suggestion.CoverImageUrl ??= enrichment.ImageUrl;
+            suggestion.MarketPrice ??= enrichment.PriceDisplay;
+            suggestion.MarketSourceName ??= enrichment.SourceName;
+            suggestion.MarketSourceUrl ??= enrichment.SourceUrl;
+            suggestion.Category ??= suggestion.Category ?? enrichment.CategoryName;
+            suggestion.PublishYear ??= enrichment.PublishYear;
+            suggestion.SuggestedIsbn = await GenerateUniqueIsbnAsync(enrichment.Isbn, cancellationToken);
+
+            if (string.IsNullOrWhiteSpace(suggestion.SuggestedCategoryId) && !string.IsNullOrWhiteSpace(enrichment.CategoryName))
+            {
+                suggestion.SuggestedCategoryId = await ResolveCategoryIdByNameAsync(enrichment.CategoryName, cancellationToken);
+            }
+        }
+    }
+
+    private async Task<BookSuggestionEnrichment?> FetchBookMetadataAsync(string title, CancellationToken cancellationToken)
+    {
+        var systemPrompt = @"Bạn là trợ lý nhập hàng cho nhà sách.
+Nhiệm vụ: tìm thông tin đầy đủ về cuốn sách mà admin đang cân nhắc nhập thêm.
+Sử dụng Google Search để lấy dữ liệu mới nhất (mô tả nội dung, tác giả, NXB, số trang, năm XB, giá bán, ảnh bìa, ISBN).
+Trả về duy nhất JSON:
+{
+  ""title"": ""..."",
+  ""description"": ""..."",
+  ""authors"": [""..."", ""...""],
+  ""publisher"": ""..."",
+  ""publishYear"": 2024,
+  ""pageCount"": 320,
+  ""priceVnd"": 145000,
+  ""priceDisplay"": ""145.000₫ tại Tiki"",
+  ""category"": ""Sách kỹ năng"",
+  ""isbn"": ""9786041234567"",
+  ""imageUrl"": ""https://..."",
+  ""sourceName"": ""Tiki"",
+  ""sourceUrl"": ""https://..."" 
+}";
+
+        var payload = new
+        {
+            systemInstruction = new
+            {
+                parts = new[]
+                {
+                    new { text = systemPrompt }
+                }
+            },
+            contents = new[]
+            {
+                new
+                {
+                    role = "user",
+                    parts = new[]
+                    {
+                        new { text = JsonSerializer.Serialize(new { title }) }
+                    }
+                }
+            },
+            tools = new object[]
+            {
+                new { googleSearch = new { } }
+            },
+            generationConfig = new
+            {
+                temperature = 0.3,
+                responseMimeType = "application/json"
+            }
+        };
+
+        var doc = await CallGeminiCustomAsync(payload, null, null, null, cancellationToken);
+        if (doc == null)
+        {
+            return null;
+        }
+
+        using (doc)
+        {
+            var text = ExtractFirstTextFromResponse(doc);
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return null;
+            }
+
+            try
+            {
+                using var jsonDoc = JsonDocument.Parse(text);
+                var root = jsonDoc.RootElement;
+
+                var description = root.TryGetProperty("description", out var descProp) && descProp.ValueKind == JsonValueKind.String
+                    ? descProp.GetString()
+                    : null;
+                var publisher = root.TryGetProperty("publisher", out var pubProp) && pubProp.ValueKind == JsonValueKind.String
+                    ? pubProp.GetString()
+                    : null;
+                var pageCount = root.TryGetProperty("pageCount", out var pageProp) && pageProp.ValueKind == JsonValueKind.Number
+                    ? pageProp.GetInt32()
+                    : (int?)null;
+                var priceVnd = root.TryGetProperty("priceVnd", out var priceProp) && priceProp.ValueKind == JsonValueKind.Number
+                    ? priceProp.GetDecimal()
+                    : (decimal?)null;
+                var priceDisplay = root.TryGetProperty("priceDisplay", out var priceDisplayProp) && priceDisplayProp.ValueKind == JsonValueKind.String
+                    ? priceDisplayProp.GetString()
+                    : null;
+                var publishYear = root.TryGetProperty("publishYear", out var publishYearProp) && publishYearProp.ValueKind == JsonValueKind.Number
+                    ? publishYearProp.GetInt32()
+                    : (int?)null;
+                var category = root.TryGetProperty("category", out var categoryProp) && categoryProp.ValueKind == JsonValueKind.String
+                    ? categoryProp.GetString()
+                    : null;
+                var isbn = root.TryGetProperty("isbn", out var isbnProp) && isbnProp.ValueKind == JsonValueKind.String
+                    ? isbnProp.GetString()
+                    : null;
+                var imageUrl = root.TryGetProperty("imageUrl", out var imageProp) && imageProp.ValueKind == JsonValueKind.String
+                    ? imageProp.GetString()
+                    : null;
+                var sourceName = root.TryGetProperty("sourceName", out var sourceNameProp) && sourceNameProp.ValueKind == JsonValueKind.String
+                    ? sourceNameProp.GetString()
+                    : null;
+                var sourceUrl = root.TryGetProperty("sourceUrl", out var sourceUrlProp) && sourceUrlProp.ValueKind == JsonValueKind.String
+                    ? sourceUrlProp.GetString()
+                    : null;
+
+                string? authorName = null;
+                if (root.TryGetProperty("authors", out var authorsProp) && authorsProp.ValueKind == JsonValueKind.Array)
+                {
+                    var names = authorsProp
+                        .EnumerateArray()
+                        .Where(x => x.ValueKind == JsonValueKind.String)
+                        .Select(x => x.GetString())
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Select(x => x!.Trim())
+                        .ToArray();
+                    if (names.Length > 0)
+                    {
+                        authorName = string.Join(", ", names);
+                    }
+                }
+
+                return new BookSuggestionEnrichment(
+                    Title: root.TryGetProperty("title", out var titleProp) && titleProp.ValueKind == JsonValueKind.String ? titleProp.GetString() ?? title : title,
+                    Description: description,
+                    AuthorName: authorName,
+                    PublisherName: publisher,
+                    PageCount: pageCount,
+                    PriceVnd: priceVnd,
+                    PriceDisplay: priceDisplay,
+                    CategoryName: category,
+                    PublishYear: publishYear,
+                    Isbn: isbn,
+                    ImageUrl: imageUrl,
+                    SourceName: sourceName,
+                    SourceUrl: sourceUrl);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse book metadata JSON. Raw: {Text}", text);
+                return null;
+            }
+        }
+    }
+
+    private async Task<string> GenerateUniqueIsbnAsync(string? preferredIsbn, CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(preferredIsbn))
+        {
+            var normalized = NormalizeIsbn(preferredIsbn);
+            var exists = await _db.Books.AnyAsync(b => b.Isbn == normalized, cancellationToken);
+            if (!exists)
+            {
+                return normalized;
+            }
+        }
+
+        for (var i = 0; i < 25; i++)
+        {
+            var candidate = $"978{RandomNumberGenerator.GetInt32(100000000, 999999999)}";
+            var exists = await _db.Books.AnyAsync(b => b.Isbn == candidate, cancellationToken);
+            if (!exists)
+            {
+                return candidate;
+            }
+        }
+
+        return Guid.NewGuid().ToString("N")[..13];
+    }
+
+    private static string NormalizeIsbn(string isbn)
+        => new string(isbn.Where(char.IsLetterOrDigit).ToArray());
+
+    private async Task<string?> ResolveCategoryIdByNameAsync(string? categoryName, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(categoryName))
+        {
+            return null;
+        }
+
+        var category = await _db.Categories
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Name == categoryName, cancellationToken);
+
+        return category?.CategoryId.ToString();
+    }
+
+    private async Task<long?> ResolveOrCreateCategoryAsync(long? categoryId, string? categoryName, CancellationToken cancellationToken)
+    {
+        if (categoryId.HasValue)
+        {
+            var exists = await _db.Categories.AsNoTracking().AnyAsync(c => c.CategoryId == categoryId.Value, cancellationToken);
+            if (exists)
+            {
+                return categoryId.Value;
+            }
+        }
+
+        var normalizedName = string.IsNullOrWhiteSpace(categoryName) ? null : categoryName.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedName))
+        {
+            return null;
+        }
+
+        var existing = await _db.Categories.FirstOrDefaultAsync(c => c.Name == normalizedName, cancellationToken);
+        if (existing != null)
+        {
+            return existing.CategoryId;
+        }
+
+        var category = new Category
+        {
+            Name = normalizedName,
+            Description = "Tạo bởi AI"
+        };
+        _db.Categories.Add(category);
+        await _db.SaveChangesAsync(cancellationToken);
+        return category.CategoryId;
+    }
+
+    private async Task<long?> ResolveOrCreatePublisherAsync(long? publisherId, string? publisherName, CancellationToken cancellationToken)
+    {
+        if (publisherId.HasValue)
+        {
+            var exists = await _db.Publishers.AsNoTracking().AnyAsync(p => p.PublisherId == publisherId.Value, cancellationToken);
+            if (exists)
+            {
+                return publisherId.Value;
+            }
+        }
+
+        var normalizedName = string.IsNullOrWhiteSpace(publisherName) ? null : publisherName.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedName))
+        {
+            return null;
+        }
+
+        var existing = await _db.Publishers.FirstOrDefaultAsync(p => p.Name == normalizedName, cancellationToken);
+        if (existing != null)
+        {
+            return existing.PublisherId;
+        }
+
+        var publisher = new Publisher
+        {
+            Name = normalizedName
+        };
+        _db.Publishers.Add(publisher);
+        await _db.SaveChangesAsync(cancellationToken);
+        return publisher.PublisherId;
+    }
+
+    private async Task<Author?> ResolveOrCreateAuthorAsync(string? authorName, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(authorName))
+        {
+            return null;
+        }
+
+        var (firstName, lastName) = SplitAuthorName(authorName);
+        var existing = await _db.Authors.FirstOrDefaultAsync(
+            a => a.FirstName == firstName && a.LastName == lastName,
+            cancellationToken);
+
+        if (existing != null)
+        {
+            return existing;
+        }
+
+        var author = new Author
+        {
+            FirstName = firstName,
+            LastName = lastName,
+            Gender = Gender.Other
+        };
+
+        _db.Authors.Add(author);
+        await _db.SaveChangesAsync(cancellationToken);
+        return author;
+    }
+
+    private static (string FirstName, string LastName) SplitAuthorName(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0)
+        {
+            return ("AI", "Author");
+        }
+
+        if (parts.Length == 1)
+        {
+            return (parts[0], parts[0]);
+        }
+
+        var firstName = parts[0];
+        var lastName = string.Join(' ', parts.Skip(1));
+        return (firstName, lastName);
+    }
+
+    private async Task<Dictionary<string, MarketPriceInfo>> FetchMarketPriceInsightsAsync(
+        IEnumerable<string?> titles,
+        CancellationToken cancellationToken)
+    {
+        var list = titles?
+            .Select(t => t?.Trim())
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Select(t => t!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(10)
+            .ToList() ?? new List<string>();
+
+        if (list.Count == 0)
+        {
+            return new Dictionary<string, MarketPriceInfo>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var systemPrompt = @"Bạn là trợ lý AI chuyên săn giá sách tại Việt Nam.
+Hãy dùng Google Search để tìm giá hiện tại cho danh sách sách được cung cấp.
+Trả về đúng JSON theo cấu trúc:
+{
+  ""items"": [
+    {
+      ""title"": ""Tên sách"",
+      ""marketPrice"": ""Giá tham khảo (khoảng giá hoặc giá tốt nhất, kèm đơn vị VND)"",
+      ""sourceName"": ""Tên sàn/web"",
+      ""sourceUrl"": ""URL chi tiết""
+    }
+  ]
+}";
 
         var userPayload = new
         {
-            question = lastUserMessage.Content,
-            conversation = trimmedHistory,
-            dataset = dataPayload,
-            expectedOutput = new
+            type = "market_price_lookup",
+            language = "vi",
+            books = list
+        };
+
+        var body = new
+        {
+            systemInstruction = new
             {
-                language,
-                sections = new[]
+                parts = new[]
                 {
-                    "overview",
-                    "metrics",
-                    "insights",
-                    "recommendedActions"
-                },
-                mentionDataSources = true
+                    new { text = systemPrompt }
+                }
+            },
+            contents = new[]
+            {
+                new
+                {
+                    role = "user",
+                    parts = new[]
+                    {
+                        new { text = JsonSerializer.Serialize(userPayload) }
+                    }
+                }
+            },
+            tools = new object[]
+            {
+                new { googleSearch = new { } }
+            },
+            generationConfig = new
+            {
+                temperature = 0.2,
+                responseMimeType = "application/json"
             }
         };
 
-        var aiResultJson = await CallGeminiAsync(
-            systemPrompt,
-            JsonSerializer.Serialize(userPayload),
-            cancellationToken);
-
-        if (aiResultJson == null)
+        var doc = await CallGeminiCustomAsync(body, null, null, null, cancellationToken);
+        if (doc == null)
         {
-            return new ApiResponse<AdminAiChatResponse>
-            {
-                Success = false,
-                Message = "Không thể kết nối tới dịch vụ AI để trả lời câu hỏi.",
-                Errors = new List<string> { "AI service unavailable" }
-            };
+            return new Dictionary<string, MarketPriceInfo>(StringComparer.OrdinalIgnoreCase);
         }
 
-        var assistantMessage = new AdminAiChatMessage
+        using (doc)
         {
-            Role = "assistant",
-            Content = aiResultJson
-        };
-
-        var updatedMessages = request.Messages
-            .Select(m => new AdminAiChatMessage
+            var text = ExtractFirstTextFromResponse(doc);
+            if (string.IsNullOrWhiteSpace(text))
             {
-                Role = m.Role,
-                Content = m.Content
-            })
-            .ToList();
-        updatedMessages.Add(assistantMessage);
-
-        return new ApiResponse<AdminAiChatResponse>
-        {
-            Success = true,
-            Message = "Trả lời thành công",
-            Data = new AdminAiChatResponse
-            {
-                Messages = updatedMessages,
-                PlainTextAnswer = aiResultJson,
-                MarkdownAnswer = aiResultJson,
-                DataSources = dataSources.ToList(),
-                Insights = new Dictionary<string, object>
-                {
-                    ["timeframe"] = new { fromUtc = from, toUtc = to },
-                    ["dataSources"] = dataSources.ToList()
-                }
+                return new Dictionary<string, MarketPriceInfo>(StringComparer.OrdinalIgnoreCase);
             }
-        };
+
+            try
+            {
+                using var jsonDoc = JsonDocument.Parse(text);
+                var root = jsonDoc.RootElement;
+                if (!root.TryGetProperty("items", out var itemsElem) || itemsElem.ValueKind != JsonValueKind.Array)
+                {
+                    return new Dictionary<string, MarketPriceInfo>(StringComparer.OrdinalIgnoreCase);
+                }
+
+                var result = new Dictionary<string, MarketPriceInfo>(StringComparer.OrdinalIgnoreCase);
+                foreach (var item in itemsElem.EnumerateArray())
+                {
+                    if (!item.TryGetProperty("title", out var titleProp) || titleProp.ValueKind != JsonValueKind.String)
+                    {
+                        continue;
+                    }
+
+                    var title = titleProp.GetString();
+                    if (string.IsNullOrWhiteSpace(title))
+                    {
+                        continue;
+                    }
+
+                    var price = item.TryGetProperty("marketPrice", out var priceProp) && priceProp.ValueKind == JsonValueKind.String
+                        ? priceProp.GetString()
+                        : null;
+                    var sourceName = item.TryGetProperty("sourceName", out var sourceNameProp) && sourceNameProp.ValueKind == JsonValueKind.String
+                        ? sourceNameProp.GetString()
+                        : null;
+                    var sourceUrl = item.TryGetProperty("sourceUrl", out var sourceUrlProp) && sourceUrlProp.ValueKind == JsonValueKind.String
+                        ? sourceUrlProp.GetString()
+                        : null;
+
+                    result[NormalizeTitleKey(title)] = new MarketPriceInfo(
+                        title,
+                        price,
+                        sourceName,
+                        sourceUrl);
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse market price JSON payload. Raw text: {Text}", text);
+                return new Dictionary<string, MarketPriceInfo>(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+    }
+
+    private static string NormalizeTitleKey(string? title)
+        => string.IsNullOrWhiteSpace(title)
+            ? string.Empty
+            : title.Trim().ToLowerInvariant();
+
+    private bool TryPrepareGeminiRequest(out string model, out string baseUrl, out string apiKey)
+    {
+        apiKey = Environment.GetEnvironmentVariable("Gemini__ApiKey")
+            ?? _configuration["Gemini:ApiKey"]
+            ?? string.Empty;
+        
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            var hasEnv = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("Gemini__ApiKey"));
+            var hasConfig = !string.IsNullOrEmpty(_configuration["Gemini:ApiKey"]);
+            _logger.LogWarning("Gemini:ApiKey is not configured. Env var: {HasEnv}, Config: {HasConfig}. Please set Gemini__ApiKey environment variable.", 
+                hasEnv, hasConfig);
+            model = DefaultModel;
+            baseUrl = "https://generativelanguage.googleapis.com";
+            return false;
+        }
+
+        model = Environment.GetEnvironmentVariable("Gemini__Model")
+            ?? _configuration["Gemini:Model"] 
+            ?? DefaultModel;
+        
+        baseUrl = (Environment.GetEnvironmentVariable("Gemini__BaseUrl")
+            ?? _configuration["Gemini:BaseUrl"] 
+            ?? "https://generativelanguage.googleapis.com").TrimEnd('/');
+        
+        return true;
     }
 
     /// <summary>
@@ -747,33 +1606,15 @@ Nhiệm vụ:
     /// </summary>
     private async Task<string?> CallGeminiAsync(string systemPrompt, string userPayload, CancellationToken cancellationToken)
     {
-        // Đọc từ biến môi trường (ưu tiên) hoặc từ configuration
-        var apiKeyFromEnv = Environment.GetEnvironmentVariable("Gemini__ApiKey");
-        var apiKeyFromConfig = _configuration["Gemini:ApiKey"];
-        var apiKey = apiKeyFromEnv ?? apiKeyFromConfig;
-        
-        if (string.IsNullOrWhiteSpace(apiKey))
+        if (!TryPrepareGeminiRequest(out var model, out var baseUrl, out var apiKey))
         {
-            _logger.LogWarning("Gemini:ApiKey is not configured. Env var: {HasEnv}, Config: {HasConfig}. Please set Gemini__ApiKey environment variable.", 
-                !string.IsNullOrEmpty(apiKeyFromEnv), !string.IsNullOrEmpty(apiKeyFromConfig));
             return null;
         }
 
-        var model = Environment.GetEnvironmentVariable("Gemini__Model") 
-            ?? _configuration["Gemini:Model"] 
-            ?? DefaultModel;
-        
-        var baseUrl = (Environment.GetEnvironmentVariable("Gemini__BaseUrl") 
-            ?? _configuration["Gemini:BaseUrl"] 
-            ?? "https://generativelanguage.googleapis.com").TrimEnd('/');
-        
         _logger.LogDebug("Calling Gemini API: Model={Model}, BaseUrl={BaseUrl}, ApiKeyLength={ApiKeyLength}", 
             model, baseUrl, apiKey?.Length ?? 0);
         
         var url = $"{baseUrl}/v1beta/models/{model}:generateContent?key={apiKey}";
-
-        using var requestMessage = new HttpRequestMessage(HttpMethod.Post, url);
-
         var body = new
         {
             systemInstruction = new
@@ -801,38 +1642,25 @@ Nhiệm vụ:
             }
         };
 
-        requestMessage.Content = new StringContent(
-            JsonSerializer.Serialize(body),
-            Encoding.UTF8,
-            "application/json");
-
-        try
+        var doc = await CallGeminiCustomAsync(body, model, baseUrl, apiKey, cancellationToken);
+        if (doc == null)
         {
-            var response = await _httpClient.SendAsync(requestMessage, cancellationToken);
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("Gemini API error {StatusCode}: {Content}", response.StatusCode, content);
                 return null;
             }
 
-            using var doc = JsonDocument.Parse(content);
-            var root = doc.RootElement;
-
-            if (!root.TryGetProperty("candidates", out var candidates) || candidates.ValueKind != JsonValueKind.Array || candidates.GetArrayLength() == 0)
+        using var docRef = doc;
+        if (!docRef.RootElement.TryGetProperty("candidates", out var candidates) || candidates.ValueKind != JsonValueKind.Array)
             {
                 return null;
             }
 
             foreach (var candidate in candidates.EnumerateArray())
             {
-                if (!candidate.TryGetProperty("content", out var candidateContent))
+            if (!candidate.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Object)
                 {
                     continue;
                 }
-
-                if (!candidateContent.TryGetProperty("parts", out var parts) || parts.ValueKind != JsonValueKind.Array)
+            if (!content.TryGetProperty("parts", out var parts) || parts.ValueKind != JsonValueKind.Array)
                 {
                     continue;
                 }
@@ -851,6 +1679,34 @@ Nhiệm vụ:
             }
 
             return null;
+    }
+
+    private async Task<JsonDocument?> CallGeminiCustomAsync(object payload, string? modelOverride, string? baseUrlOverride, string? apiKeyOverride, CancellationToken cancellationToken)
+    {
+        if (!TryPrepareGeminiRequest(out var defaultModel, out var defaultBaseUrl, out var defaultApiKey))
+        {
+            return null;
+        }
+
+        var model = string.IsNullOrWhiteSpace(modelOverride) ? defaultModel : modelOverride!;
+        var baseUrl = string.IsNullOrWhiteSpace(baseUrlOverride) ? defaultBaseUrl : baseUrlOverride!.TrimEnd('/');
+        var apiKey = string.IsNullOrWhiteSpace(apiKeyOverride) ? defaultApiKey : apiKeyOverride!;
+
+        var url = $"{baseUrl}/v1beta/models/{model}:generateContent?key={apiKey}";
+        using var requestMessage = new HttpRequestMessage(HttpMethod.Post, url);
+        requestMessage.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+
+        try
+        {
+            var response = await _httpClient.SendAsync(requestMessage, cancellationToken);
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Gemini API error {StatusCode}: {Content}", response.StatusCode, content);
+                return null;
+            }
+
+            return JsonDocument.Parse(content);
         }
         catch (HttpRequestException httpEx)
         {
@@ -868,6 +1724,58 @@ Nhiệm vụ:
             return null;
         }
     }
+
+    private static string? ExtractFirstTextFromResponse(JsonDocument doc)
+    {
+        if (!doc.RootElement.TryGetProperty("candidates", out var candidates) || candidates.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        foreach (var candidate in candidates.EnumerateArray())
+        {
+            if (!candidate.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (!content.TryGetProperty("parts", out var parts) || parts.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            foreach (var part in parts.EnumerateArray())
+            {
+                if (part.TryGetProperty("text", out var textProp) && textProp.ValueKind == JsonValueKind.String)
+                {
+                    var text = textProp.GetString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        return text;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private sealed record MarketPriceInfo(string Title, string? MarketPrice, string? SourceName, string? SourceUrl);
+
+    private sealed record BookSuggestionEnrichment(
+        string Title,
+        string? Description,
+        string? AuthorName,
+        string? PublisherName,
+        int? PageCount,
+        int? PublishYear,
+        decimal? PriceVnd,
+        string? PriceDisplay,
+        string? CategoryName,
+        string? Isbn,
+        string? ImageUrl,
+        string? SourceName,
+        string? SourceUrl);
 
     private static BookDto MapBookToDto(Book b)
     {

@@ -100,6 +100,72 @@ public class AiController : ControllerBase
 
         return BadRequest(result);
     }
+
+    /// <summary>
+    /// Voice assistant: admin gửi audio, hệ thống phân tích và trả về transcript + audio trả lời đã dựa trên dữ liệu thật.
+    /// </summary>
+    [HttpPost("admin-voice")]
+    [Authorize(Roles = "ADMIN")]
+    public async Task<ActionResult<ApiResponse<AdminAiVoiceResponse>>> AdminVoice(
+        [FromBody] AdminAiVoiceRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!ModelState.IsValid)
+        {
+            var errors = ModelState.Values
+                .SelectMany(v => v.Errors)
+                .Select(e => e.ErrorMessage)
+                .ToList();
+
+            return BadRequest(new ApiResponse<AdminAiVoiceResponse>
+            {
+                Success = false,
+                Message = "Dữ liệu không hợp lệ",
+                Errors = errors
+            });
+        }
+
+        var result = await _aiService.GetAdminVoiceAnswerAsync(request, cancellationToken);
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+
+        return BadRequest(result);
+    }
+
+    /// <summary>
+    /// Nhập mới sách từ dữ liệu do AI đề xuất (admin có thể chỉnh sửa trước trên UI).
+    /// </summary>
+    [HttpPost("admin-import-book")]
+    [Authorize(Roles = "ADMIN")]
+    public async Task<ActionResult<ApiResponse<AdminAiImportBookResponse>>> AdminImportBook(
+        [FromBody] AdminAiImportBookRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!ModelState.IsValid)
+        {
+            var errors = ModelState.Values
+                .SelectMany(v => v.Errors)
+                .Select(e => e.ErrorMessage)
+                .ToList();
+
+            return BadRequest(new ApiResponse<AdminAiImportBookResponse>
+            {
+                Success = false,
+                Message = "Dữ liệu không hợp lệ",
+                Errors = errors
+            });
+        }
+
+        var result = await _aiService.ImportAiSuggestedBookAsync(request, cancellationToken);
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+
+        return BadRequest(result);
+    }
 }
 
 
