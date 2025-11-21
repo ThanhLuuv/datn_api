@@ -372,9 +372,13 @@ FodyWeavers.xsd
 # JetBrains Rider
 *.sln.iml
 
-# Custom
+# Custom - Configuration files with sensitive data
+appsettings.json
+appsettings.Development.json
 appsettings.Production.json
 appsettings.Staging.json
+appsettings.*.json
+!appsettings.example.json
 *.user
 
 # Environment variables and secrets
@@ -386,6 +390,12 @@ appsettings.Staging.json
 .env.production.local
 .env.example
 !env.md
+
+# API Keys and Secrets
+*secrets.json
+*secrets.*.json
+*apikeys.json
+*apikeys.*.json
 
 # Database
 *.db
