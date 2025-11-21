@@ -419,7 +419,46 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
                             : null,
                         Reason = s.TryGetProperty("reason", out var rProp) && rProp.ValueKind == JsonValueKind.String
                             ? (rProp.GetString() ?? string.Empty)
-                            : string.Empty
+                            : string.Empty,
+                        MarketPrice = s.TryGetProperty("marketPrice", out var mpProp) && mpProp.ValueKind == JsonValueKind.String
+                            ? mpProp.GetString()
+                            : null,
+                        MarketSourceName = s.TryGetProperty("marketSourceName", out var msnProp) && msnProp.ValueKind == JsonValueKind.String
+                            ? msnProp.GetString()
+                            : null,
+                        MarketSourceUrl = s.TryGetProperty("marketSourceUrl", out var msuProp) && msuProp.ValueKind == JsonValueKind.String
+                            ? msuProp.GetString()
+                            : null,
+                        SuggestedIsbn = s.TryGetProperty("suggestedIsbn", out var siProp) && siProp.ValueKind == JsonValueKind.String
+                            ? siProp.GetString()
+                            : null,
+                        SuggestedCategoryId = s.TryGetProperty("suggestedCategoryId", out var scidProp) && scidProp.ValueKind == JsonValueKind.String
+                            ? scidProp.GetString()
+                            : null,
+                        AuthorName = s.TryGetProperty("authorName", out var authorProp) && authorProp.ValueKind == JsonValueKind.String
+                            ? authorProp.GetString()
+                            : null,
+                        PublisherName = s.TryGetProperty("publisherName", out var pubProp) && pubProp.ValueKind == JsonValueKind.String
+                            ? pubProp.GetString()
+                            : null,
+                        PageCount = s.TryGetProperty("pageCount", out var pcProp) && pcProp.ValueKind == JsonValueKind.Number
+                            ? pcProp.GetInt32()
+                            : (int?)null,
+                        PublishYear = s.TryGetProperty("publishYear", out var pyProp) && pyProp.ValueKind == JsonValueKind.Number
+                            ? pyProp.GetInt32()
+                            : (int?)null,
+                        SuggestedPrice = s.TryGetProperty("suggestedPrice", out var spProp) && spProp.ValueKind == JsonValueKind.Number
+                            ? spProp.GetDecimal()
+                            : (decimal?)null,
+                        SuggestedStock = s.TryGetProperty("suggestedStock", out var ssProp) && ssProp.ValueKind == JsonValueKind.Number
+                            ? ssProp.GetInt32()
+                            : (int?)null,
+                        CoverImageUrl = s.TryGetProperty("coverImageUrl", out var ciProp) && ciProp.ValueKind == JsonValueKind.String
+                            ? ciProp.GetString()
+                            : null,
+                        Description = s.TryGetProperty("description", out var descProp) && descProp.ValueKind == JsonValueKind.String
+                            ? descProp.GetString()
+                            : null
                     };
 
                     if (!string.IsNullOrWhiteSpace(suggestion.Title))
@@ -440,30 +479,6 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
             _logger.LogWarning(ex, "Failed to parse admin AI assistant JSON. Raw content: {Content}", aiResultJson);
             // Trường hợp parse lỗi, vẫn trả về text gốc vào overview cho admin đọc
             response.Overview = "Không thể parse JSON từ AI. Nội dung thô:\n" + aiResultJson;
-        }
-
-        if (response.BookSuggestions.Count > 0)
-        {
-            var priceMap = await FetchMarketPriceInsightsAsync(
-                response.BookSuggestions.Select(s => s.Title),
-                cancellationToken);
-
-            foreach (var suggestion in response.BookSuggestions)
-            {
-                var key = NormalizeTitleKey(suggestion.Title);
-                if (!string.IsNullOrEmpty(key) && priceMap.TryGetValue(key, out var priceInfo))
-                {
-                    suggestion.MarketPrice = string.IsNullOrWhiteSpace(priceInfo.MarketPrice)
-                        ? null
-                        : priceInfo.MarketPrice;
-                    suggestion.MarketSourceName = string.IsNullOrWhiteSpace(priceInfo.SourceName)
-                        ? null
-                        : priceInfo.SourceName;
-                    suggestion.MarketSourceUrl = string.IsNullOrWhiteSpace(priceInfo.SourceUrl)
-                        ? null
-                        : priceInfo.SourceUrl;
-                }
-            }
         }
 
         if (response.BookSuggestions.Count > 0)
@@ -1128,6 +1143,7 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
             suggestion.Category ??= suggestion.Category ?? enrichment.CategoryName;
             suggestion.PublishYear ??= enrichment.PublishYear;
             suggestion.SuggestedIsbn = await GenerateUniqueIsbnAsync(enrichment.Isbn, cancellationToken);
+            suggestion.SuggestedStock ??= 0;
 
             if (string.IsNullOrWhiteSpace(suggestion.SuggestedCategoryId) && !string.IsNullOrWhiteSpace(enrichment.CategoryName))
             {
