@@ -454,12 +454,14 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
     private async Task<string?> CallGeminiAsync(string systemPrompt, string userPayload, CancellationToken cancellationToken)
     {
         // Đọc từ biến môi trường (ưu tiên) hoặc từ configuration
-        var apiKey = Environment.GetEnvironmentVariable("Gemini__ApiKey") 
-            ?? _configuration["Gemini:ApiKey"];
+        var apiKeyFromEnv = Environment.GetEnvironmentVariable("Gemini__ApiKey");
+        var apiKeyFromConfig = _configuration["Gemini:ApiKey"];
+        var apiKey = apiKeyFromEnv ?? apiKeyFromConfig;
         
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            _logger.LogWarning("Gemini:ApiKey is not configured. Please set Gemini__ApiKey environment variable.");
+            _logger.LogWarning("Gemini:ApiKey is not configured. Env var: {HasEnv}, Config: {HasConfig}. Please set Gemini__ApiKey environment variable.", 
+                !string.IsNullOrEmpty(apiKeyFromEnv), !string.IsNullOrEmpty(apiKeyFromConfig));
             return null;
         }
 
@@ -470,6 +472,10 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
         var baseUrl = (Environment.GetEnvironmentVariable("Gemini__BaseUrl") 
             ?? _configuration["Gemini:BaseUrl"] 
             ?? "https://generativelanguage.googleapis.com").TrimEnd('/');
+        
+        _logger.LogDebug("Calling Gemini API: Model={Model}, BaseUrl={BaseUrl}, ApiKeyLength={ApiKeyLength}", 
+            model, baseUrl, apiKey?.Length ?? 0);
+        
         var url = $"{baseUrl}/v1beta/models/{model}:generateContent?key={apiKey}";
 
         using var requestMessage = new HttpRequestMessage(HttpMethod.Post, url);
@@ -552,9 +558,19 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
 
             return null;
         }
+        catch (HttpRequestException httpEx)
+        {
+            _logger.LogError(httpEx, "HTTP error calling Gemini API: {Message}", httpEx.Message);
+            return null;
+        }
+        catch (TaskCanceledException timeoutEx)
+        {
+            _logger.LogError(timeoutEx, "Timeout calling Gemini API");
+            return null;
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error calling Gemini API");
+            _logger.LogError(ex, "Unexpected error calling Gemini API: {Message}", ex.Message);
             return null;
         }
     }

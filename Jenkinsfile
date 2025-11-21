@@ -41,16 +41,30 @@ pipeline {
         sh '''
           cd ${DEPLOY_DIR}
           export BUILD_TAG=${TAG}
+          # Export biến môi trường để docker-compose có thể đọc được
+          export GEMINI_API_KEY="${GEMINI_API_KEY}"
+          export GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}"
+          export GEMINI_BASE_URL="${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}"
           # Đảm bảo biến môi trường Gemini được truyền vào container
           # GEMINI_API_KEY được lấy từ Jenkins credentials: 'bookstore-gemini-api-key'
           if [ -z "${GEMINI_API_KEY}" ]; then
             echo "Warning: GEMINI_API_KEY is not set. Gemini features may not work."
             echo "Please configure Jenkins credential with ID: bookstore-gemini-api-key"
           else
-            echo "Gemini API key configured successfully"
+            echo "Gemini API key configured successfully (length: ${#GEMINI_API_KEY} chars)"
           fi
           # Không pull backend (image build local); không build lại tại deploy
+          # Truyền biến môi trường trực tiếp vào docker compose
+          GEMINI_API_KEY="${GEMINI_API_KEY}" \
+          GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}" \
+          GEMINI_BASE_URL="${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}" \
           docker compose -f ${COMPOSE_FILE} up -d
+          
+          # Kiểm tra biến môi trường trong container
+          echo "Checking environment variables in container..."
+          sleep 2
+          docker compose -f ${COMPOSE_FILE} exec -T backend sh -c 'env | grep -i gemini || echo "No Gemini env vars found"' || true
+          
           docker image prune -f || true
         '''
       }
