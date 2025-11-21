@@ -93,7 +93,7 @@ public class AdminAiBookSuggestion
     public string Reason { get; set; } = string.Empty;
 
     /// <summary>
-    /// Giá thị trường tham khảo (từ các sàn TMĐT / nhà sách khác).
+    /// Giá thị trường tham khảo (từ các sàn TMĐT / nhà sách khác) và dùng để gợi ý giá bán.
     /// </summary>
     public string? MarketPrice { get; set; }
 
@@ -143,11 +143,6 @@ public class AdminAiBookSuggestion
     public string? Description { get; set; }
 
     /// <summary>
-    /// URL ảnh bìa được AI tìm kiếm và đề xuất.
-    /// </summary>
-    public string? CoverImageUrl { get; set; }
-
-    /// <summary>
     /// Năm xuất bản gợi ý.
     /// </summary>
     public int? PublishYear { get; set; }
@@ -179,7 +174,6 @@ public class AdminAiImportBookRequest
     public decimal? SuggestedPrice { get; set; }
     public int? Stock { get; set; }
 
-    public string? CoverImageUrl { get; set; }
     public string? Description { get; set; }
 }
 

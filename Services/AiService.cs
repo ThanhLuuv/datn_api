@@ -1,5 +1,11 @@
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
 using System.Text.Json;
 using BookStore.Api.Data;
 using BookStore.Api.DTOs;
@@ -18,6 +24,79 @@ public class AiService : IAiService
     private readonly ILogger<AiService> _logger;
 
     private const string DefaultModel = "gemini-2.5-flash";
+    private static readonly IReadOnlyList<object> AdminTableSchemas = new object[]
+    {
+        new
+        {
+            table = "order",
+            primaryKey = "OrderId",
+            description = "Đơn hàng bán ra cho khách",
+            columns = new[]
+            {
+                "OrderId","CustomerId","OrderDate","Status","TotalAmount","PaymentStatus","PaymentMethod","ShippingFee","CreatedAt","UpdatedAt"
+            }
+        },
+        new
+        {
+            table = "order_detail",
+            primaryKey = "OrderDetailId",
+            description = "Chi tiết từng sách trong đơn hàng",
+            columns = new[]
+            {
+                "OrderDetailId","OrderId","Isbn","Quantity","UnitPrice","Discount","SubTotal"
+            }
+        },
+        new
+        {
+            table = "book",
+            primaryKey = "Isbn",
+            description = "Danh mục sách, tồn kho, giá",
+            columns = new[]
+            {
+                "Isbn","Title","CategoryId","PublisherId","AveragePrice","PublishYear","Stock","Status","CreatedAt","UpdatedAt"
+            }
+        },
+        new
+        {
+            table = "category",
+            primaryKey = "CategoryId",
+            description = "Thể loại sách",
+            columns = new[]
+            {
+                "CategoryId","Name","Description","CreatedAt"
+            }
+        },
+        new
+        {
+            table = "customer",
+            primaryKey = "CustomerId",
+            description = "Khách hàng mua sách",
+            columns = new[]
+            {
+                "CustomerId","FirstName","LastName","Email","Phone","CreatedAt","Tier"
+            }
+        },
+        new
+        {
+            table = "purchase_order",
+            primaryKey = "PurchaseOrderId",
+            description = "Phiếu nhập hàng từ nhà cung cấp",
+            columns = new[]
+            {
+                "PurchaseOrderId","SupplierId","OrderDate","ExpectedDate","Status","TotalCost"
+            }
+        },
+        new
+        {
+            table = "inventory_snapshot",
+            primaryKey = "SnapshotId",
+            description = "Ảnh chụp tồn kho định kỳ",
+            columns = new[]
+            {
+                "SnapshotId","Isbn","QuantityOnHand","RecordedAt"
+            }
+        }
+    };
 
     public AiService(
         BookStoreDbContext db,
@@ -441,21 +520,10 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
                         PublisherName = s.TryGetProperty("publisherName", out var pubProp) && pubProp.ValueKind == JsonValueKind.String
                             ? pubProp.GetString()
                             : null,
-                        PageCount = s.TryGetProperty("pageCount", out var pcProp) && pcProp.ValueKind == JsonValueKind.Number
-                            ? pcProp.GetInt32()
-                            : (int?)null,
-                        PublishYear = s.TryGetProperty("publishYear", out var pyProp) && pyProp.ValueKind == JsonValueKind.Number
-                            ? pyProp.GetInt32()
-                            : (int?)null,
-                        SuggestedPrice = s.TryGetProperty("suggestedPrice", out var spProp) && spProp.ValueKind == JsonValueKind.Number
-                            ? spProp.GetDecimal()
-                            : (decimal?)null,
-                        SuggestedStock = s.TryGetProperty("suggestedStock", out var ssProp) && ssProp.ValueKind == JsonValueKind.Number
-                            ? ssProp.GetInt32()
-                            : (int?)null,
-                        CoverImageUrl = s.TryGetProperty("coverImageUrl", out var ciProp) && ciProp.ValueKind == JsonValueKind.String
-                            ? ciProp.GetString()
-                            : null,
+                        PageCount = TryGetIntProperty(s, "pageCount"),
+                        PublishYear = TryGetIntProperty(s, "publishYear"),
+                        SuggestedPrice = TryGetDecimalProperty(s, "suggestedPrice"),
+                        SuggestedStock = TryGetIntProperty(s, "suggestedStock"),
                         Description = s.TryGetProperty("description", out var descProp) && descProp.ValueKind == JsonValueKind.String
                             ? descProp.GetString()
                             : null
@@ -483,11 +551,14 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
 
         if (response.BookSuggestions.Count > 0)
         {
-            await EnrichBookSuggestionsAsync(response.BookSuggestions, cancellationToken);
+        var enrichTask = EnrichBookSuggestionsAsync(response.BookSuggestions, cancellationToken);
+        var priceTask = FetchMarketPriceInsightsAsync(
+            response.BookSuggestions.Select(s => s.Title),
+            cancellationToken);
 
-            var priceMap = await FetchMarketPriceInsightsAsync(
-                response.BookSuggestions.Select(s => s.Title),
-                cancellationToken);
+        await Task.WhenAll(enrichTask, priceTask);
+
+        var priceMap = priceTask.Result;
 
             foreach (var suggestion in response.BookSuggestions)
             {
@@ -505,6 +576,7 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
                         : priceInfo.SourceUrl;
                 }
 
+                suggestion.SuggestedPrice ??= TryParseVndPrice(suggestion.MarketPrice);
                 suggestion.SuggestedIsbn ??= await GenerateUniqueIsbnAsync(null, cancellationToken);
             }
         }
@@ -551,76 +623,34 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
             (from, to) = (to, from);
         }
 
+        var language = string.IsNullOrWhiteSpace(request.Language)
+            ? "vi"
+            : request.Language.Trim().ToLowerInvariant();
+
         var trimmedHistory = request.Messages
             .TakeLast(12)
             .Select(m => new
             {
                 role = (m.Role ?? "user").ToLowerInvariant(),
-                content = m.Content?.Trim() ?? string.Empty
+                content = (m.Content ?? string.Empty).Trim()
             })
             .Where(m => !string.IsNullOrWhiteSpace(m.content))
             .ToList();
 
-        var language = string.IsNullOrWhiteSpace(request.Language)
-            ? "vi"
-            : request.Language.Trim().ToLowerInvariant();
-        var languageLabel = language == "vi" ? "tiếng Việt" : "ngôn ngữ đã yêu cầu";
-
-        var (dataPayload, dataSources) = await BuildAdminDataSnapshotAsync(
+        var answerResult = await GenerateAdminAnswerAsync(
+            lastUserMessage.Content,
             from,
             to,
             request.IncludeInventorySnapshot,
             request.IncludeCategoryShare,
+            language,
+            trimmedHistory,
             cancellationToken);
-
-        var systemPrompt = $@"Bạn là trợ lý dữ liệu thời gian thực cho quản trị viên BookStore.
-            Bạn được cung cấp dữ liệu JSON (profitReport, revenueReport, inventorySnapshot, categoryShare) và lịch sử hội thoại của admin.
-            Nhiệm vụ:
-            - Trả lời câu hỏi dựa trên dữ liệu thực tế, không được đoán.
-            - Luôn ghi rõ các chỉ số chính (doanh thu, lợi nhuận, tồn kho...) nếu liên quan.
-            - Đề xuất hành động cụ thể (ví dụ: ""Lọc báo cáo tồn kho ngày hôm nay"", ""Xuất báo cáo doanh thu theo quý"", ...).
-            - Nếu dữ liệu thiếu, hãy nói rõ và đề xuất bước tiếp theo.
-            Định dạng câu trả lời: tối đa 4 đoạn/bullet, rõ ràng, bằng {languageLabel}.
-            ";
-
-        var userPayload = new
-        {
-            question = lastUserMessage.Content,
-            conversation = trimmedHistory,
-            dataset = dataPayload,
-            expectedOutput = new
-            {
-                language,
-                sections = new[]
-                {
-                    "overview",
-                    "metrics",
-                    "insights",
-                    "recommendedActions"
-                },
-                mentionDataSources = true
-            }
-        };
-
-        var aiResultJson = await CallGeminiAsync(
-            systemPrompt,
-            JsonSerializer.Serialize(userPayload),
-            cancellationToken);
-
-        if (aiResultJson == null)
-        {
-            return new ApiResponse<AdminAiChatResponse>
-            {
-                Success = false,
-                Message = "Không thể kết nối tới dịch vụ AI để trả lời câu hỏi.",
-                Errors = new List<string> { "AI service unavailable" }
-            };
-        }
 
         var assistantMessage = new AdminAiChatMessage
         {
             Role = "assistant",
-            Content = aiResultJson
+            Content = answerResult.PlainText
         };
 
         var updatedMessages = request.Messages
@@ -639,16 +669,240 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
             Data = new AdminAiChatResponse
             {
                 Messages = updatedMessages,
-                PlainTextAnswer = aiResultJson,
-                MarkdownAnswer = aiResultJson,
-                DataSources = dataSources.ToList(),
+                PlainTextAnswer = answerResult.PlainText,
+                MarkdownAnswer = answerResult.Markdown,
+                DataSources = answerResult.DataSources,
                 Insights = new Dictionary<string, object>
                 {
                     ["timeframe"] = new { fromUtc = from, toUtc = to },
-                    ["dataSources"] = dataSources.ToList()
+                    ["dataSources"] = answerResult.DataSources
                 }
             }
         };
+    }
+
+    private async Task<AdminAiAnswerResult> GenerateAdminAnswerAsync(
+        string question,
+        DateTime from,
+        DateTime to,
+        bool includeInventorySnapshot,
+        bool includeCategoryShare,
+        string language,
+        IEnumerable<object> conversation,
+        CancellationToken cancellationToken)
+    {
+        var (dataPayload, dataSources) = await BuildAdminDataSnapshotAsync(
+            from,
+            to,
+            includeInventorySnapshot,
+            includeCategoryShare,
+            cancellationToken);
+        var schemaDescriptor = GetAdminTableSchemas();
+
+        var planTask = BuildAiSqlPlanAsync(
+            question,
+            conversation,
+            dataPayload,
+            schemaDescriptor,
+            language,
+            cancellationToken);
+
+        List<AiSqlResult> sqlResults = new();
+        AiSqlPlan? plan = null;
+        try
+        {
+            plan = await planTask;
+            if (plan != null && plan.Steps.Count > 0)
+            {
+                sqlResults = await ExecuteAiSqlPlanAsync(plan, cancellationToken);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "AI SQL plan failed. Falling back to summary only.");
+        }
+
+        var finalAnswer = await BuildAiFinalAnswerAsync(
+            question,
+            conversation,
+            dataPayload,
+            schemaDescriptor,
+            plan,
+            sqlResults,
+            language,
+            cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(finalAnswer))
+        {
+            finalAnswer = "Xin lỗi, tôi chưa thể tìm thấy câu trả lời phù hợp từ dữ liệu hiện có.";
+        }
+
+        var formattedAnswer = BuildChatAnswerFormatting(finalAnswer);
+        var plainTextAnswer = string.IsNullOrWhiteSpace(formattedAnswer.PlainText)
+            ? finalAnswer
+            : formattedAnswer.PlainText;
+        var markdownAnswer = string.IsNullOrWhiteSpace(formattedAnswer.Markdown)
+            ? finalAnswer
+            : formattedAnswer.Markdown;
+
+        return new AdminAiAnswerResult(
+            plainTextAnswer,
+            markdownAnswer,
+            dataSources.ToList());
+    }
+
+    private async Task<AiSqlPlan?> BuildAiSqlPlanAsync(
+        string question,
+        IEnumerable<object> conversation,
+        object dataset,
+        IReadOnlyList<object> schema,
+        string language,
+        CancellationToken cancellationToken)
+    {
+        var systemPrompt = @"Bạn là AI lập kế hoạch truy vấn cho trợ lý dữ liệu BookStore.
+Nhiệm vụ:
+- Phân tích câu hỏi và lịch sử hội thoại.
+- Nếu cần thêm dữ liệu, hãy đề xuất các truy vấn SELECT cụ thể (tối đa 2).
+- Mỗi truy vấn phải có alias duy nhất và mô tả ngắn.
+- Luôn trả về JSON với cấu trúc:
+{
+  ""summary"": ""..."",
+  ""steps"": [
+    { ""alias"": ""latest_order"", ""description"": ""..."", ""sql"": ""SELECT ..."" }
+  ]
+}
+- Nếu dataset đã đủ để trả lời, trả về ""steps"": [] và đặt summary mô tả lý do.";
+
+        var payload = new
+        {
+            question,
+            language,
+            conversation,
+            dataset,
+            schema
+        };
+
+        var planJson = await CallGeminiAsync(systemPrompt, JsonSerializer.Serialize(payload), cancellationToken);
+        if (planJson == null)
+        {
+            return null;
+        }
+
+        var normalized = StripCodeFence(planJson);
+        try
+        {
+            using var doc = JsonDocument.Parse(normalized);
+            var root = doc.RootElement;
+            var summary = root.TryGetProperty("summary", out var summaryProp) && summaryProp.ValueKind == JsonValueKind.String
+                ? summaryProp.GetString() ?? string.Empty
+                : string.Empty;
+
+            var steps = new List<AiSqlPlanStep>();
+            if (root.TryGetProperty("steps", out var stepsProp) && stepsProp.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var stepElem in stepsProp.EnumerateArray())
+                {
+                    var alias = stepElem.TryGetProperty("alias", out var aliasProp) && aliasProp.ValueKind == JsonValueKind.String
+                        ? aliasProp.GetString()
+                        : null;
+                    var description = stepElem.TryGetProperty("description", out var descProp) && descProp.ValueKind == JsonValueKind.String
+                        ? descProp.GetString()
+                        : null;
+                    var sql = stepElem.TryGetProperty("sql", out var sqlProp) && sqlProp.ValueKind == JsonValueKind.String
+                        ? sqlProp.GetString()
+                        : null;
+
+                    if (string.IsNullOrWhiteSpace(alias) || string.IsNullOrWhiteSpace(sql))
+                    {
+                        continue;
+                    }
+
+                    steps.Add(new AiSqlPlanStep(alias.Trim(), description?.Trim() ?? string.Empty, sql.Trim()));
+                }
+            }
+
+            return new AiSqlPlan(summary, steps);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse AI SQL plan. Raw: {Plan}", normalized);
+            return null;
+        }
+    }
+
+    private async Task<List<AiSqlResult>> ExecuteAiSqlPlanAsync(
+        AiSqlPlan plan,
+        CancellationToken cancellationToken)
+    {
+        const int MaxRows = 25;
+        var results = new List<AiSqlResult>();
+        foreach (var step in plan.Steps)
+        {
+            if (!ValidateAiSql(step.Sql))
+            {
+                _logger.LogWarning("AI SQL step rejected (alias={Alias}). SQL: {Sql}", step.Alias, step.Sql);
+                continue;
+            }
+
+            try
+            {
+                var rows = await ExecuteSqlQueryAsync(step.Sql, MaxRows, cancellationToken);
+                results.Add(new AiSqlResult(step.Alias, step.Description, rows));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to execute AI SQL step {Alias}", step.Alias);
+            }
+        }
+
+        return results;
+    }
+
+    private async Task<string?> BuildAiFinalAnswerAsync(
+        string question,
+        IEnumerable<object> conversation,
+        object dataset,
+        IReadOnlyList<object> schema,
+        AiSqlPlan? plan,
+        List<AiSqlResult> sqlResults,
+        string language,
+        CancellationToken cancellationToken)
+    {
+        var systemPrompt = @"Bạn là trợ lý dữ liệu BookStore.
+Bạn sẽ nhận:
+- câu hỏi,
+- dataset tổng hợp,
+- schema,
+- kết quả thực thi các truy vấn SQL (nếu có).
+
+Nhiệm vụ:
+1. Trả lời trực tiếp câu hỏi dựa trên dữ liệu đã có và kết quả truy vấn.
+2. Không liệt kê truy vấn SQL hay alias.
+3. Nếu không đủ dữ liệu, giải thích ngắn gọn lý do.
+4. Trả lời bằng tiếng Việt, tối đa 4 đoạn/bullet, chỉ plain text/markdown.";
+
+        var payload = new
+        {
+            question,
+            language,
+            conversation,
+            dataset,
+            schema,
+            plan = plan == null ? null : new
+            {
+                plan.Summary,
+                steps = plan.Steps.Select(s => new { s.Alias, s.Description })
+            },
+            sqlResults = sqlResults.Select(r => new
+            {
+                r.Alias,
+                r.Description,
+                rows = r.Rows
+            })
+        };
+
+        var response = await CallGeminiAsync(systemPrompt, JsonSerializer.Serialize(payload), cancellationToken);
+        return response == null ? null : StripCodeFence(response);
     }
 
     public async Task<ApiResponse<AdminAiVoiceResponse>> GetAdminVoiceAnswerAsync(
@@ -672,41 +926,78 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
             (from, to) = (to, from);
         }
 
-        var (dataPayload, dataSources) = await BuildAdminDataSnapshotAsync(
-            from,
-            to,
-            request.IncludeInventorySnapshot,
-            request.IncludeCategoryShare,
-            cancellationToken);
-
         var language = string.IsNullOrWhiteSpace(request.Language)
             ? "vi"
             : request.Language.Trim().ToLowerInvariant();
-        var languageLabel = language == "vi" ? "tiếng Việt" : "ngôn ngữ đã yêu cầu";
         var voiceName = Environment.GetEnvironmentVariable("Gemini__Voice")
             ?? _configuration["Gemini:Voice"]
             ?? "Zephyr";
         var mimeType = string.IsNullOrWhiteSpace(request.MimeType)
             ? "audio/webm"
             : request.MimeType!;
-
-        var contextPayload = new
+        var transcript = await TranscribeVoiceInputAsync(request.AudioBase64, mimeType, language, cancellationToken);
+        if (string.IsNullOrWhiteSpace(transcript))
         {
-            dataset = dataPayload,
-            language,
-            expectations = new[]
+            return new ApiResponse<AdminAiVoiceResponse>
             {
-                "Trả lời dựa trên dữ liệu thật (profitReport, revenueReport, inventorySnapshot, categoryShare).",
-                "Nếu dữ liệu thiếu thì nói rõ và đề xuất bước tiếp theo.",
-                "Câu trả lời nói tối đa 45 giây, giọng tự tin, chuyên nghiệp."
-            }
+                Success = false,
+                Message = "Không thể nhận dạng giọng nói.",
+                Errors = new List<string> { "transcription_failed" }
+            };
+        }
+
+        var conversationHistory = new List<object>
+        {
+            new { role = "user", content = transcript }
         };
 
-        var systemPrompt = $@"Bạn là trợ lý dữ liệu giọng nói cho quản trị viên BookStore.
-- Phân tích câu hỏi của admin và dùng dữ liệu được cung cấp (dataset JSON).
-- Ưu tiên nêu con số chính xác (doanh thu, lợi nhuận, lượng tồn).
-- Đề xuất hành động cụ thể sau khi trả lời.
-- Giữ câu trả lời ngắn gọn, rõ ràng bằng {languageLabel}.";
+        var answerResult = await GenerateAdminAnswerAsync(
+            transcript,
+            from,
+            to,
+            request.IncludeInventorySnapshot,
+            request.IncludeCategoryShare,
+            language,
+            conversationHistory,
+            cancellationToken);
+
+        var (audioBase64, audioMimeType) = await SynthesizeVoiceAnswerAsync(
+            answerResult.PlainText,
+            voiceName,
+            cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(audioBase64))
+        {
+            return new ApiResponse<AdminAiVoiceResponse>
+            {
+                Success = false,
+                Message = "Không thể tạo audio phản hồi.",
+                Errors = new List<string> { "tts_failed" }
+            };
+        }
+
+        return new ApiResponse<AdminAiVoiceResponse>
+        {
+            Success = true,
+            Message = "Voice assistant trả lời thành công",
+            Data = new AdminAiVoiceResponse
+            {
+                Transcript = transcript,
+                AnswerText = answerResult.PlainText,
+                AudioBase64 = audioBase64,
+                AudioMimeType = audioMimeType ?? "audio/wav",
+                DataSources = answerResult.DataSources
+            }
+        };
+    }
+
+    private async Task<string?> TranscribeVoiceInputAsync(
+        string audioBase64,
+        string mimeType,
+        string language,
+        CancellationToken cancellationToken)
+    {
+        var prompt = $"Bạn là trình chuyển giọng nói thành văn bản cho quản trị viên BookStore. Ngôn ngữ chính: {(language == "vi" ? "tiếng Việt" : "ngôn ngữ người dùng yêu cầu")}. Trả lời duy nhất bằng văn bản thuần, không thêm nhận xét.";
 
         var body = new
         {
@@ -714,7 +1005,7 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
             {
                 parts = new[]
                 {
-                    new { text = systemPrompt }
+                    new { text = prompt }
                 }
             },
             contents = new[]
@@ -729,22 +1020,67 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
                             inline_data = new
                             {
                                 mime_type = mimeType,
-                                data = request.AudioBase64
+                                data = audioBase64
                             }
-                        },
-                        new
-                        {
-                            text = JsonSerializer.Serialize(contextPayload)
                         }
                     }
                 }
             },
-            responseModalities = new[] { "AUDIO" },
             generationConfig = new
             {
-                temperature = 0.35,
+                temperature = 0.2,
                 candidateCount = 1,
-                responseMimeType = "application/json",
+                responseMimeType = "text/plain"
+            }
+        };
+
+        var doc = await CallGeminiCustomAsync(body, null, null, null, cancellationToken);
+        if (doc == null)
+        {
+            return null;
+        }
+
+        using (doc)
+        {
+            return StripCodeFence(ExtractFirstTextFromResponse(doc) ?? string.Empty);
+        }
+    }
+
+    private async Task<(string? AudioBase64, string? MimeType)> SynthesizeVoiceAnswerAsync(
+        string answerText,
+        string voiceName,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(answerText))
+        {
+            return (null, null);
+        }
+
+        var body = new
+        {
+            systemInstruction = new
+            {
+                parts = new[]
+                {
+                    new { text = "Bạn là trợ lý trả lời giọng nói cho quản trị viên BookStore. Chuyển văn bản sau thành lời nói tự tin, rõ ràng." }
+                }
+            },
+            contents = new[]
+            {
+                new
+                {
+                    role = "user",
+                    parts = new object[]
+                    {
+                        new { text = answerText }
+                    }
+                }
+            },
+            generationConfig = new
+            {
+                temperature = 0.3,
+                candidateCount = 1,
+                responseMimeType = "audio/pcm",
                 speechConfig = new
                 {
                     voiceConfig = new
@@ -761,81 +1097,13 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
         var doc = await CallGeminiCustomAsync(body, null, null, null, cancellationToken);
         if (doc == null)
         {
-            return new ApiResponse<AdminAiVoiceResponse>
-            {
-                Success = false,
-                Message = "Không thể gọi dịch vụ AI voice.",
-                Errors = new List<string> { "AI service unavailable" }
-            };
+            return (null, null);
         }
-
-        string? answerText = null;
-        string? transcript = null;
-        string? audioBase64 = null;
-        string? audioMimeType = null;
 
         using (doc)
         {
-            if (doc.RootElement.TryGetProperty("candidates", out var candidates) && candidates.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var candidate in candidates.EnumerateArray())
-                {
-                    if (candidate.TryGetProperty("content", out var content) && content.TryGetProperty("parts", out var parts))
-                    {
-                        foreach (var part in parts.EnumerateArray())
-                        {
-                            if (part.TryGetProperty("text", out var textProp) && textProp.ValueKind == JsonValueKind.String)
-                            {
-                                answerText ??= textProp.GetString();
-                            }
-
-                            if (part.TryGetProperty("inlineData", out var inlineData))
-                            {
-                                audioBase64 ??= inlineData.TryGetProperty("data", out var dataProp) ? dataProp.GetString() : null;
-                                audioMimeType ??= inlineData.TryGetProperty("mimeType", out var mimeProp) ? mimeProp.GetString() : null;
-                            }
-                        }
-                    }
-
-                    if (candidate.TryGetProperty("metadata", out var metadata))
-                    {
-                        if (metadata.TryGetProperty("outputAudioTranscription", out var transcriptionObj) &&
-                            transcriptionObj.TryGetProperty("text", out var transcriptProp) &&
-                            transcriptProp.ValueKind == JsonValueKind.String)
-                        {
-                            transcript = transcriptProp.GetString();
-                        }
-                    }
-                }
-            }
+            return ExtractAudioFromResponse(doc);
         }
-
-        transcript ??= answerText;
-
-        if (string.IsNullOrWhiteSpace(audioBase64))
-        {
-            _logger.LogWarning("Gemini voice response missing audio data.");
-            return new ApiResponse<AdminAiVoiceResponse>
-            {
-                Success = false,
-                Message = "AI không trả về dữ liệu audio.",
-                Errors = new List<string> { "missing_audio" }
-            };
-        }
-
-        return new ApiResponse<AdminAiVoiceResponse>
-        {
-            Success = true,
-            Message = "Voice assistant trả lời thành công",
-            Data = new AdminAiVoiceResponse
-            {
-                Transcript = transcript,
-                AnswerText = answerText,
-                AudioBase64 = audioBase64,
-                AudioMimeType = audioMimeType ?? "audio/wav",
-                DataSources = dataSources.ToList()
-            }
-        };
     }
 
     public async Task<ApiResponse<AdminAiImportBookResponse>> ImportAiSuggestedBookAsync(
@@ -891,7 +1159,6 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
             PublishYear = publishYear,
             CategoryId = categoryId.Value,
             PublisherId = publisherId.Value,
-            ImageUrl = request.CoverImageUrl,
             Stock = stock,
             Status = true,
             CreatedAt = DateTime.UtcNow,
@@ -1113,34 +1380,53 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
         return (snapshot, dataSources);
     }
 
+    private static IReadOnlyList<object> GetAdminTableSchemas()
+        => AdminTableSchemas;
+
     private async Task EnrichBookSuggestionsAsync(
         List<AdminAiBookSuggestion> suggestions,
         CancellationToken cancellationToken)
     {
-        foreach (var suggestion in suggestions)
+        if (suggestions == null || suggestions.Count == 0)
         {
-            if (string.IsNullOrWhiteSpace(suggestion.Title))
-            {
-                continue;
-            }
+            return;
+        }
 
+        var degree = Math.Max(2, Math.Min(8, Environment.ProcessorCount * 2));
+        using var semaphore = new SemaphoreSlim(degree);
+        var tasks = suggestions.Select(s => EnrichSingleSuggestionAsync(s, semaphore, cancellationToken));
+        await Task.WhenAll(tasks);
+    }
+
+    private async Task EnrichSingleSuggestionAsync(
+        AdminAiBookSuggestion suggestion,
+        SemaphoreSlim semaphore,
+        CancellationToken cancellationToken)
+    {
+        if (suggestion == null || string.IsNullOrWhiteSpace(suggestion.Title))
+        {
+            return;
+        }
+
+        await semaphore.WaitAsync(cancellationToken);
+        try
+        {
             var enrichment = await FetchBookMetadataAsync(suggestion.Title, cancellationToken);
             if (enrichment == null)
             {
                 suggestion.SuggestedIsbn ??= await GenerateUniqueIsbnAsync(null, cancellationToken);
-                continue;
+                return;
             }
 
             suggestion.Description ??= enrichment.Description;
             suggestion.AuthorName ??= enrichment.AuthorName;
             suggestion.PublisherName ??= enrichment.PublisherName;
             suggestion.PageCount ??= enrichment.PageCount;
-            suggestion.SuggestedPrice ??= enrichment.PriceVnd;
-            suggestion.CoverImageUrl ??= enrichment.ImageUrl;
+            suggestion.SuggestedPrice ??= enrichment.PriceVnd ?? TryParseVndPrice(enrichment.PriceDisplay);
             suggestion.MarketPrice ??= enrichment.PriceDisplay;
             suggestion.MarketSourceName ??= enrichment.SourceName;
             suggestion.MarketSourceUrl ??= enrichment.SourceUrl;
-            suggestion.Category ??= suggestion.Category ?? enrichment.CategoryName;
+            suggestion.Category ??= enrichment.CategoryName;
             suggestion.PublishYear ??= enrichment.PublishYear;
             suggestion.SuggestedIsbn = await GenerateUniqueIsbnAsync(enrichment.Isbn, cancellationToken);
             suggestion.SuggestedStock ??= 0;
@@ -1150,13 +1436,529 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
                 suggestion.SuggestedCategoryId = await ResolveCategoryIdByNameAsync(enrichment.CategoryName, cancellationToken);
             }
         }
+        finally
+        {
+            semaphore.Release();
+        }
+    }
+
+    private static int? TryGetIntProperty(JsonElement json, string propertyName)
+    {
+        if (!json.TryGetProperty(propertyName, out var prop))
+        {
+            return null;
+        }
+
+        if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt32(out var number))
+        {
+            return number;
+        }
+
+        if (prop.ValueKind == JsonValueKind.String &&
+            int.TryParse(prop.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return parsed;
+        }
+
+        return null;
+    }
+
+    private static decimal? TryGetDecimalProperty(JsonElement json, string propertyName)
+    {
+        if (!json.TryGetProperty(propertyName, out var prop))
+        {
+            return null;
+        }
+
+        if (prop.ValueKind == JsonValueKind.Number)
+        {
+            return prop.GetDecimal();
+        }
+
+        if (prop.ValueKind == JsonValueKind.String)
+        {
+            var str = prop.GetString();
+            if (decimal.TryParse(str, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed))
+            {
+                return parsed;
+            }
+
+            return TryParseVndPrice(str);
+        }
+
+        return null;
+    }
+
+    private static string StripCodeFence(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return text;
+        }
+
+        var trimmed = text.Trim();
+        if (trimmed.StartsWith("```", StringComparison.Ordinal))
+        {
+            var newlineIndex = trimmed.IndexOf('\n');
+            if (newlineIndex < 0)
+            {
+                newlineIndex = trimmed.IndexOf('\r');
+            }
+
+            if (newlineIndex >= 0 && newlineIndex + 1 < trimmed.Length)
+            {
+                trimmed = trimmed[(newlineIndex + 1)..];
+            }
+
+            trimmed = trimmed.TrimStart('\r', '\n');
+
+            if (trimmed.EndsWith("```", StringComparison.Ordinal))
+            {
+                trimmed = trimmed[..^3];
+            }
+        }
+
+        return trimmed.Trim();
+    }
+
+    private static string? ExtractJsonObject(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var trimmed = text.Trim();
+        if (trimmed.StartsWith("{", StringComparison.Ordinal) && trimmed.EndsWith("}", StringComparison.Ordinal))
+        {
+            return trimmed;
+        }
+
+        var startIndex = trimmed.IndexOf('{');
+        var endIndex = trimmed.LastIndexOf('}');
+        if (startIndex >= 0 && endIndex > startIndex)
+        {
+            return trimmed.Substring(startIndex, endIndex - startIndex + 1);
+        }
+
+        return null;
+    }
+
+    private static BookSuggestionEnrichment? TryExtractMetadataFromPlainText(string text, string fallbackTitle)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        string? priceDisplay = null;
+        decimal? priceVnd = null;
+        var priceMatch = Regex.Match(text, @"(?<amount>\d{1,3}(?:[.,]\d{3})+|\d+)\s?(?:vnd|vnđ|đ|₫)", RegexOptions.IgnoreCase);
+        if (priceMatch.Success)
+        {
+            priceDisplay = priceMatch.Value.Trim();
+            var amountDigits = Regex.Replace(priceMatch.Groups["amount"].Value, @"[^\d]", string.Empty);
+            if (decimal.TryParse(amountDigits, out var parsed))
+            {
+                priceVnd = parsed;
+            }
+        }
+
+        string? sourceUrl = null;
+        var urlMatch = Regex.Match(text, @"https?:\/\/\S+", RegexOptions.IgnoreCase);
+        if (urlMatch.Success)
+        {
+            sourceUrl = urlMatch.Value.TrimEnd('.', ',', ';');
+        }
+
+        string? sourceName = null;
+        var knownSources = new[]
+        {
+            "Shopee","Lazada","Tiki","Fahasa","Phương Nam","Phuong Nam","NewShop","Vinabook"
+        };
+        foreach (var source in knownSources)
+        {
+            if (text.Contains(source, StringComparison.OrdinalIgnoreCase))
+            {
+                sourceName = source;
+                break;
+            }
+        }
+
+        if (priceDisplay == null && sourceName == null && sourceUrl == null)
+        {
+            return null;
+        }
+
+        return new BookSuggestionEnrichment(
+            Title: fallbackTitle,
+            Description: text.Trim(),
+            AuthorName: null,
+            PublisherName: null,
+            PageCount: null,
+            PriceVnd: priceVnd,
+            PriceDisplay: priceDisplay,
+            CategoryName: null,
+            PublishYear: null,
+            Isbn: null,
+            SourceName: sourceName,
+            SourceUrl: sourceUrl);
+    }
+
+    private static decimal? TryParseVndPrice(string? priceText)
+    {
+        if (string.IsNullOrWhiteSpace(priceText))
+        {
+            return null;
+        }
+
+        var digits = new string(priceText.Where(char.IsDigit).ToArray());
+        if (string.IsNullOrEmpty(digits))
+        {
+            return null;
+        }
+
+        if (decimal.TryParse(digits, NumberStyles.Number, CultureInfo.InvariantCulture, out var value))
+        {
+            return value;
+        }
+
+        return null;
+    }
+
+    private static ChatAnswerFormatting BuildChatAnswerFormatting(string rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText))
+        {
+            return new ChatAnswerFormatting(string.Empty, string.Empty);
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(rawText);
+            var markdown = BuildMarkdownFromStructuredAnswer(doc.RootElement);
+            if (string.IsNullOrWhiteSpace(markdown))
+            {
+                markdown = rawText.Trim();
+            }
+
+            var plain = MarkdownToPlainText(markdown);
+            return new ChatAnswerFormatting(plain, markdown);
+        }
+        catch
+        {
+            var fallback = rawText.Trim();
+            return new ChatAnswerFormatting(MarkdownToPlainText(fallback), fallback);
+        }
+    }
+
+    private static string BuildMarkdownFromStructuredAnswer(JsonElement root)
+    {
+        var sb = new StringBuilder();
+
+        void AppendSection(string title, string? content)
+        {
+            if (!string.IsNullOrWhiteSpace(content))
+            {
+                sb.Append("**").Append(title).Append(":** ").AppendLine(content.Trim());
+                sb.AppendLine();
+            }
+        }
+
+        void AppendList(string title, JsonElement element)
+        {
+            if (element.ValueKind != JsonValueKind.Array || element.GetArrayLength() == 0)
+            {
+                return;
+            }
+
+            sb.Append("**").Append(title).Append(":**").AppendLine();
+            foreach (var child in element.EnumerateArray())
+            {
+                var text = child.ValueKind == JsonValueKind.String
+                    ? child.GetString()
+                    : child.ValueKind == JsonValueKind.Object && child.TryGetProperty("text", out var val) && val.ValueKind == JsonValueKind.String
+                        ? val.GetString()
+                        : null;
+
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    sb.Append("- ").AppendLine(text.Trim());
+                }
+            }
+
+            sb.AppendLine();
+        }
+
+        if (root.TryGetProperty("overview", out var overview) && overview.ValueKind == JsonValueKind.String)
+        {
+            AppendSection("Tóm tắt", overview.GetString());
+        }
+
+        if (root.TryGetProperty("tablesUsed", out var tablesUsed) && tablesUsed.ValueKind == JsonValueKind.Array)
+        {
+            var hasAny = false;
+            var builder = new StringBuilder();
+            foreach (var entry in tablesUsed.EnumerateArray())
+            {
+                if (!entry.TryGetProperty("table", out var tableProp) || tableProp.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                var tableName = tableProp.GetString();
+                if (string.IsNullOrWhiteSpace(tableName))
+                {
+                    continue;
+                }
+
+                hasAny = true;
+                var columns = entry.TryGetProperty("columns", out var colsProp) && colsProp.ValueKind == JsonValueKind.Array
+                    ? colsProp.EnumerateArray()
+                        .Where(x => x.ValueKind == JsonValueKind.String)
+                        .Select(x => x.GetString())
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Select(x => x!.Trim())
+                        .ToArray()
+                    : Array.Empty<string>();
+                var reason = entry.TryGetProperty("reason", out var reasonProp) && reasonProp.ValueKind == JsonValueKind.String
+                    ? reasonProp.GetString()
+                    : null;
+
+                builder.Append("- ").Append(tableName.Trim());
+                if (columns.Length > 0)
+                {
+                    builder.Append(" (").Append(string.Join(", ", columns)).Append(')');
+                }
+
+                if (!string.IsNullOrWhiteSpace(reason))
+                {
+                    builder.Append(": ").Append(reason.Trim());
+                }
+
+                builder.AppendLine();
+            }
+
+            if (hasAny)
+            {
+                sb.Append("**Bảng liên quan:**").AppendLine();
+                sb.Append(builder.ToString()).AppendLine();
+            }
+        }
+
+        if (root.TryGetProperty("metrics", out var metrics))
+        {
+            AppendList("Chỉ số chính", metrics);
+        }
+
+        if (root.TryGetProperty("insights", out var insights))
+        {
+            AppendList("Nhận định", insights);
+        }
+
+        if (root.TryGetProperty("recommendedActions", out var actions))
+        {
+            AppendList("Hành động đề xuất", actions);
+        }
+
+        if (root.TryGetProperty("sqlExamples", out var sqlExamples) && sqlExamples.ValueKind == JsonValueKind.Array)
+        {
+            var contentBuilder = new StringBuilder();
+            foreach (var entry in sqlExamples.EnumerateArray())
+            {
+                var title = entry.TryGetProperty("title", out var titleProp) && titleProp.ValueKind == JsonValueKind.String
+                    ? titleProp.GetString()
+                    : null;
+                var statement = entry.TryGetProperty("statement", out var stmtProp) && stmtProp.ValueKind == JsonValueKind.String
+                    ? stmtProp.GetString()
+                    : null;
+
+                if (string.IsNullOrWhiteSpace(statement))
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(title))
+                {
+                    contentBuilder.Append("- ").AppendLine(title.Trim());
+                }
+                contentBuilder.Append("```sql").AppendLine();
+                contentBuilder.Append(statement.Trim()).AppendLine();
+                contentBuilder.Append("```").AppendLine();
+            }
+
+            if (contentBuilder.Length > 0)
+            {
+                sb.Append("**Truy vấn gợi ý:**").AppendLine();
+                sb.Append(contentBuilder.ToString()).AppendLine();
+            }
+        }
+
+        if (root.TryGetProperty("mentionDataSources", out var mentionData) && mentionData.ValueKind == JsonValueKind.Array)
+        {
+            var sources = mentionData
+                .EnumerateArray()
+                .Where(x => x.ValueKind == JsonValueKind.String)
+                .Select(x => x.GetString())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x!.Trim())
+                .ToArray();
+
+            if (sources.Length > 0)
+            {
+                sb.Append("Nguồn dữ liệu: ").AppendLine(string.Join(", ", sources));
+            }
+        }
+
+        return sb.ToString().Trim();
+    }
+
+    private static string MarkdownToPlainText(string markdown)
+    {
+        if (string.IsNullOrWhiteSpace(markdown))
+        {
+            return string.Empty;
+        }
+
+        var text = markdown.Replace("\r\n", "\n");
+        text = Regex.Replace(text, @"\*\*(.+?)\*\*", "$1", RegexOptions.Singleline);
+        text = Regex.Replace(text, @"`{1,3}", string.Empty);
+        text = Regex.Replace(text, @"!\[.*?\]\(.*?\)", string.Empty);
+        text = Regex.Replace(text, @"\[(.*?)\]\(.*?\)", "$1");
+        text = Regex.Replace(text, @"\n{3,}", "\n\n");
+        return text.Trim();
+    }
+
+    private sealed record ChatAnswerFormatting(string PlainText, string Markdown);
+
+    private sealed record AdminAiAnswerResult(string PlainText, string Markdown, List<string> DataSources);
+
+    private sealed record AiSqlPlan(string Summary, IReadOnlyList<AiSqlPlanStep> Steps);
+
+    private sealed record AiSqlPlanStep(string Alias, string Description, string Sql);
+
+    private sealed record AiSqlResult(string Alias, string Description, List<Dictionary<string, object?>> Rows);
+
+    private bool ValidateAiSql(string sql)
+    {
+        if (string.IsNullOrWhiteSpace(sql))
+        {
+            return false;
+        }
+
+        var normalized = sql.Trim();
+        if (!(normalized.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) ||
+              normalized.StartsWith("WITH", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        if (normalized.IndexOf(';') >= 0)
+        {
+            return false;
+        }
+
+        string[] forbidden = { "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE", "MERGE" };
+        return forbidden.All(token => normalized.IndexOf(token, StringComparison.OrdinalIgnoreCase) < 0);
+    }
+
+    private async Task<List<Dictionary<string, object?>>> ExecuteSqlQueryAsync(
+        string sql,
+        int maxRows,
+        CancellationToken cancellationToken)
+    {
+        var connection = _db.Database.GetDbConnection();
+        var shouldClose = false;
+        if (connection.State != ConnectionState.Open)
+        {
+            await connection.OpenAsync(cancellationToken);
+            shouldClose = true;
+        }
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.CommandType = CommandType.Text;
+            command.CommandTimeout = 30;
+
+            var rows = new List<Dictionary<string, object?>>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            var fieldNames = Enumerable.Range(0, reader.FieldCount)
+                .Select(reader.GetName)
+                .ToArray();
+
+            var count = 0;
+            while (await reader.ReadAsync(cancellationToken) && count < maxRows)
+            {
+                var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                foreach (var name in fieldNames)
+                {
+                    var value = reader[name];
+                    dict[name] = value == DBNull.Value ? null : value;
+                }
+
+                rows.Add(dict);
+                count++;
+            }
+
+            return rows;
+        }
+        finally
+        {
+            if (shouldClose)
+            {
+                await connection.CloseAsync();
+            }
+        }
+    }
+
+    private static (string? AudioBase64, string? MimeType) ExtractAudioFromResponse(JsonDocument doc)
+    {
+        if (!doc.RootElement.TryGetProperty("candidates", out var candidates) || candidates.ValueKind != JsonValueKind.Array)
+        {
+            return (null, null);
+        }
+
+        foreach (var candidate in candidates.EnumerateArray())
+        {
+            if (!candidate.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (!content.TryGetProperty("parts", out var parts) || parts.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            foreach (var part in parts.EnumerateArray())
+            {
+                if (part.TryGetProperty("inlineData", out var inlineData) && inlineData.ValueKind == JsonValueKind.Object)
+                {
+                    var data = inlineData.TryGetProperty("data", out var dataProp) && dataProp.ValueKind == JsonValueKind.String
+                        ? dataProp.GetString()
+                        : null;
+                    var mime = inlineData.TryGetProperty("mimeType", out var mimeProp) && mimeProp.ValueKind == JsonValueKind.String
+                        ? mimeProp.GetString()
+                        : null;
+
+                    if (!string.IsNullOrWhiteSpace(data))
+                    {
+                        return (data, mime);
+                    }
+                }
+            }
+        }
+
+        return (null, null);
     }
 
     private async Task<BookSuggestionEnrichment?> FetchBookMetadataAsync(string title, CancellationToken cancellationToken)
     {
         var systemPrompt = @"Bạn là trợ lý nhập hàng cho nhà sách.
 Nhiệm vụ: tìm thông tin đầy đủ về cuốn sách mà admin đang cân nhắc nhập thêm.
-Sử dụng Google Search để lấy dữ liệu mới nhất (mô tả nội dung, tác giả, NXB, số trang, năm XB, giá bán, ảnh bìa, ISBN).
+Sử dụng Google Search để lấy dữ liệu mới nhất (mô tả nội dung, tác giả, NXB, số trang, năm XB, giá bán, ISBN).
 Trả về duy nhất JSON:
 {
   ""title"": ""..."",
@@ -1169,7 +1971,6 @@ Trả về duy nhất JSON:
   ""priceDisplay"": ""145.000₫ tại Tiki"",
   ""category"": ""Sách kỹ năng"",
   ""isbn"": ""9786041234567"",
-  ""imageUrl"": ""https://..."",
   ""sourceName"": ""Tiki"",
   ""sourceUrl"": ""https://..."" 
 }";
@@ -1201,7 +2002,7 @@ Trả về duy nhất JSON:
             generationConfig = new
             {
                 temperature = 0.3,
-                responseMimeType = "application/json"
+                candidateCount = 1
             }
         };
 
@@ -1219,9 +2020,22 @@ Trả về duy nhất JSON:
                 return null;
             }
 
+            text = StripCodeFence(text);
+            var jsonCandidate = ExtractJsonObject(text);
+            if (jsonCandidate == null)
+            {
+                var fallback = TryExtractMetadataFromPlainText(text, title);
+                if (fallback != null)
+                {
+                    return fallback;
+                }
+
+                return null;
+            }
+
             try
             {
-                using var jsonDoc = JsonDocument.Parse(text);
+                using var jsonDoc = JsonDocument.Parse(jsonCandidate);
                 var root = jsonDoc.RootElement;
 
                 var description = root.TryGetProperty("description", out var descProp) && descProp.ValueKind == JsonValueKind.String
@@ -1247,9 +2061,6 @@ Trả về duy nhất JSON:
                     : null;
                 var isbn = root.TryGetProperty("isbn", out var isbnProp) && isbnProp.ValueKind == JsonValueKind.String
                     ? isbnProp.GetString()
-                    : null;
-                var imageUrl = root.TryGetProperty("imageUrl", out var imageProp) && imageProp.ValueKind == JsonValueKind.String
-                    ? imageProp.GetString()
                     : null;
                 var sourceName = root.TryGetProperty("sourceName", out var sourceNameProp) && sourceNameProp.ValueKind == JsonValueKind.String
                     ? sourceNameProp.GetString()
@@ -1285,12 +2096,18 @@ Trả về duy nhất JSON:
                     CategoryName: category,
                     PublishYear: publishYear,
                     Isbn: isbn,
-                    ImageUrl: imageUrl,
                     SourceName: sourceName,
                     SourceUrl: sourceUrl);
             }
             catch (Exception ex)
             {
+                var fallback = TryExtractMetadataFromPlainText(text, title);
+                if (fallback != null)
+                {
+                    _logger.LogWarning(ex, "Failed to parse JSON; using fallback extraction. Raw: {Text}", text);
+                    return fallback;
+                }
+
                 _logger.LogWarning(ex, "Failed to parse book metadata JSON. Raw: {Text}", text);
                 return null;
             }
@@ -1516,7 +2333,7 @@ Trả về đúng JSON theo cấu trúc:
             generationConfig = new
             {
                 temperature = 0.2,
-                responseMimeType = "application/json"
+                candidateCount = 1
             }
         };
 
@@ -1533,6 +2350,8 @@ Trả về đúng JSON theo cấu trúc:
             {
                 return new Dictionary<string, MarketPriceInfo>(StringComparer.OrdinalIgnoreCase);
             }
+
+            text = StripCodeFence(text);
 
             try
             {
@@ -1626,7 +2445,7 @@ Trả về đúng JSON theo cấu trúc:
         {
             return null;
         }
-
+        
         _logger.LogDebug("Calling Gemini API: Model={Model}, BaseUrl={BaseUrl}, ApiKeyLength={ApiKeyLength}", 
             model, baseUrl, apiKey?.Length ?? 0);
         
@@ -1789,7 +2608,6 @@ Trả về đúng JSON theo cấu trúc:
         string? PriceDisplay,
         string? CategoryName,
         string? Isbn,
-        string? ImageUrl,
         string? SourceName,
         string? SourceUrl);
 
