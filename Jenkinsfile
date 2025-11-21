@@ -39,6 +39,11 @@ pipeline {
         sh '''
           cd ${DEPLOY_DIR}
           export BUILD_TAG=${TAG}
+          # Đảm bảo biến môi trường Gemini được truyền vào container
+          # GEMINI_API_KEY phải được set trong Jenkins credentials hoặc environment
+          if [ -z "${GEMINI_API_KEY}" ]; then
+            echo "Warning: GEMINI_API_KEY is not set. Gemini features may not work."
+          fi
           # Không pull backend (image build local); không build lại tại deploy
           docker compose -f ${COMPOSE_FILE} up -d
           docker image prune -f || true

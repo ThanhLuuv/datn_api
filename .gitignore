@@ -377,12 +377,15 @@ appsettings.Production.json
 appsettings.Staging.json
 *.user
 
-# Environment variables
+# Environment variables and secrets
 .env
 .env.local
+.env.*.local
 .env.development.local
 .env.test.local
 .env.production.local
+.env.example
+!env.md
 
 # Database
 *.db
@@ -419,9 +422,6 @@ jspm_packages/
 
 # Yarn Integrity file
 .yarn-integrity
-
-# dotenv environment variables file
-.env
 
 # Mac
 .DS_Store

@@ -9,6 +9,10 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       # Lắng nghe trên 0.0.0.0:3001 bên trong container
       - ASPNETCORE_URLS=http://0.0.0.0:3001
+      # Gemini configuration từ biến môi trường
+      - Gemini__ApiKey=${GEMINI_API_KEY}
+      - Gemini__Model=${GEMINI_MODEL:-gemini-2.5-flash}
+      - Gemini__BaseUrl=${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}
     ports:
       # Map cổng host 3001 -> container 3001
       - "3001:3001"
