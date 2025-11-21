@@ -93,4 +93,80 @@ public class AdminAiBookSuggestion
     public string Reason { get; set; } = string.Empty;
 }
 
+public class AdminAiChatMessage
+{
+    /// <summary>
+    /// Role trong cuộc hội thoại (user hoặc assistant).
+    /// </summary>
+    [Required]
+    [RegularExpression("^(user|assistant|system)$", ErrorMessage = "Role must be user, assistant, or system")]
+    public string Role { get; set; } = "user";
+
+    /// <summary>
+    /// Nội dung tin nhắn dạng text.
+    /// </summary>
+    [Required]
+    [MaxLength(4000)]
+    public string Content { get; set; } = string.Empty;
+}
+
+public class AdminAiChatRequest
+{
+    /// <summary>
+    /// Danh sách tin nhắn (giữ lịch sử hội thoại).
+    /// </summary>
+    [Required]
+    public List<AdminAiChatMessage> Messages { get; set; } = new();
+
+    /// <summary>
+    /// Khoảng thời gian mong muốn lấy dữ liệu báo cáo. Mặc định: 30 ngày gần nhất.
+    /// </summary>
+    public DateTime? FromDate { get; set; }
+    public DateTime? ToDate { get; set; }
+
+    /// <summary>
+    /// Ngôn ngữ trả lời (vi/en). Mặc định: vi.
+    /// </summary>
+    [MaxLength(8)]
+    public string Language { get; set; } = "vi";
+
+    /// <summary>
+    /// Có kèm snapshot tồn kho hay không (mặc định: có để AI trả lời chính xác các câu hỏi inventory).
+    /// </summary>
+    public bool IncludeInventorySnapshot { get; set; } = true;
+
+    /// <summary>
+    /// Có kèm tỷ trọng danh mục hay không.
+    /// </summary>
+    public bool IncludeCategoryShare { get; set; } = true;
+}
+
+public class AdminAiChatResponse
+{
+    /// <summary>
+    /// Lịch sử hội thoại mới nhất (bao gồm tin nhắn vừa gửi).
+    /// </summary>
+    public List<AdminAiChatMessage> Messages { get; set; } = new();
+
+    /// <summary>
+    /// Phản hồi plain text từ AI (để hiển thị nhanh).
+    /// </summary>
+    public string? PlainTextAnswer { get; set; }
+
+    /// <summary>
+    /// Phản hồi định dạng Markdown (nếu có).
+    /// </summary>
+    public string? MarkdownAnswer { get; set; }
+
+    /// <summary>
+    /// Danh sách nguồn dữ liệu nội bộ đã được sử dụng để trả lời (vd: profit_report, inventory_snapshot).
+    /// </summary>
+    public List<string> DataSources { get; set; } = new();
+
+    /// <summary>
+    /// Payload có cấu trúc (tuỳ chọn) khi AI trả về bảng biểu hoặc đề xuất chi tiết.
+    /// </summary>
+    public Dictionary<string, object>? Insights { get; set; }
+}
+
 

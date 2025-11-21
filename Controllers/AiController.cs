@@ -2,6 +2,7 @@ using BookStore.Api.DTOs;
 using BookStore.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Linq;
 
 namespace BookStore.Api.Controllers;
 
@@ -59,6 +60,39 @@ public class AiController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _aiService.GetAdminInsightsAsync(request, cancellationToken);
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+
+        return BadRequest(result);
+    }
+
+    /// <summary>
+    /// Chatbox AI realtime cho admin (text) - trả lời các câu hỏi về doanh thu, tồn kho, đơn hàng...
+    /// </summary>
+    [HttpPost("admin-chat")]
+    [Authorize(Roles = "ADMIN")]
+    public async Task<ActionResult<ApiResponse<AdminAiChatResponse>>> AdminChat(
+        [FromBody] AdminAiChatRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!ModelState.IsValid)
+        {
+            var errors = ModelState.Values
+                .SelectMany(v => v.Errors)
+                .Select(e => e.ErrorMessage)
+                .ToList();
+
+            return BadRequest(new ApiResponse<AdminAiChatResponse>
+            {
+                Success = false,
+                Message = "Dữ liệu không hợp lệ",
+                Errors = errors
+            });
+        }
+
+        var result = await _aiService.GetAdminChatAnswerAsync(request, cancellationToken);
         if (result.Success)
         {
             return Ok(result);

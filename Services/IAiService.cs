@@ -13,6 +13,11 @@ public interface IAiService
     /// Trợ lý AI cho admin: phân tích mặt hàng bán chạy, danh mục, đánh giá khách hàng và gợi ý nhập hàng.
     /// </summary>
     Task<ApiResponse<AdminAiAssistantResponse>> GetAdminInsightsAsync(AdminAiAssistantRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Chatbox AI dạng live cho admin: trả lời câu hỏi về doanh thu, tồn kho, đơn hàng... dựa trên dữ liệu thật.
+    /// </summary>
+    Task<ApiResponse<AdminAiChatResponse>> GetAdminChatAnswerAsync(AdminAiChatRequest request, CancellationToken cancellationToken = default);
 }
 
 

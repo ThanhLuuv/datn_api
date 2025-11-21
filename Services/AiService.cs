@@ -4,6 +4,7 @@ using BookStore.Api.Data;
 using BookStore.Api.DTOs;
 using BookStore.Api.Models;
 using Microsoft.EntityFrameworkCore;
+using System.Linq;
 
 namespace BookStore.Api.Services;
 
@@ -445,6 +446,299 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
             Success = true,
             Message = "Sinh báo cáo gợi ý AI thành công",
             Data = response
+        };
+    }
+
+    public async Task<ApiResponse<AdminAiChatResponse>> GetAdminChatAnswerAsync(
+        AdminAiChatRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.Messages == null || request.Messages.Count == 0)
+        {
+            return new ApiResponse<AdminAiChatResponse>
+            {
+                Success = false,
+                Message = "Cần cung cấp tối thiểu một tin nhắn trong hội thoại.",
+                Errors = new List<string> { "messages is required" }
+            };
+        }
+
+        var lastUserMessage = request.Messages
+            .LastOrDefault(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase));
+
+        if (lastUserMessage == null || string.IsNullOrWhiteSpace(lastUserMessage.Content))
+        {
+            return new ApiResponse<AdminAiChatResponse>
+            {
+                Success = false,
+                Message = "Không tìm thấy câu hỏi của người dùng trong hội thoại.",
+                Errors = new List<string> { "user message is required" }
+            };
+        }
+
+        var from = request.FromDate ?? DateTime.UtcNow.AddDays(-30);
+        var to = request.ToDate ?? DateTime.UtcNow;
+        if (to < from)
+        {
+            (from, to) = (to, from);
+        }
+
+        var trimmedHistory = request.Messages
+            .TakeLast(12)
+            .Select(m => new
+            {
+                role = (m.Role ?? "user").ToLowerInvariant(),
+                content = m.Content?.Trim() ?? string.Empty
+            })
+            .Where(m => !string.IsNullOrWhiteSpace(m.content))
+            .ToList();
+
+        var language = string.IsNullOrWhiteSpace(request.Language)
+            ? "vi"
+            : request.Language.Trim().ToLowerInvariant();
+        var languageLabel = language == "vi" ? "tiếng Việt" : "ngôn ngữ đã yêu cầu";
+
+        var dataSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        ProfitReportDto? profitReport = null;
+        var profitResult = await _reportService.GetProfitReportAsync(from, to);
+        if (profitResult.Success && profitResult.Data != null)
+        {
+            profitReport = profitResult.Data;
+            dataSources.Add("profit_report");
+        }
+        else
+        {
+            _logger.LogWarning("AdminChat: Không thể lấy báo cáo lợi nhuận: {Message}", profitResult.Message);
+        }
+
+        RevenueReportResponse? revenueReport = null;
+        var revenueResult = await _reportService.GetRevenueByDateRangeAsync(new RevenueReportRequest
+        {
+            FromDate = from.Date,
+            ToDate = to.Date
+        });
+        if (revenueResult.Success && revenueResult.Data != null)
+        {
+            revenueReport = revenueResult.Data;
+            dataSources.Add("revenue_daily");
+        }
+        else
+        {
+            _logger.LogWarning("AdminChat: Không thể lấy báo cáo doanh thu ngày: {Message}", revenueResult.Message);
+        }
+
+        InventoryReportResponse? inventorySnapshot = null;
+        if (request.IncludeInventorySnapshot)
+        {
+            var inventoryResult = await _reportService.GetInventoryAsOfDateAsync(to.Date);
+            if (inventoryResult.Success && inventoryResult.Data != null)
+            {
+                inventorySnapshot = inventoryResult.Data;
+                dataSources.Add("inventory_snapshot");
+            }
+            else
+            {
+                _logger.LogWarning("AdminChat: Không thể lấy báo cáo tồn kho: {Message}", inventoryResult.Message);
+            }
+        }
+
+        BooksByCategoryResponse? categoryShare = null;
+        if (request.IncludeCategoryShare)
+        {
+            var categoryResult = await _reportService.GetBooksByCategoryAsync();
+            if (categoryResult.Success && categoryResult.Data != null)
+            {
+                categoryShare = categoryResult.Data;
+                dataSources.Add("category_share");
+            }
+            else
+            {
+                _logger.LogWarning("AdminChat: Không thể lấy tỷ trọng danh mục: {Message}", categoryResult.Message);
+            }
+        }
+
+        var profitPayload = profitReport == null
+            ? null
+            : new
+            {
+                summary = new
+                {
+                    profitReport.OrdersCount,
+                    profitReport.Revenue,
+                    profitReport.CostOfGoods,
+                    profitReport.OperatingExpenses,
+                    profit = profitReport.Profit
+                },
+                topSoldItems = profitReport.TopSoldItems
+                    .OrderByDescending(i => i.QtySold)
+                    .Take(10)
+                    .Select(i => new
+                    {
+                        i.Isbn,
+                        i.Title,
+                        i.QtySold,
+                        i.Revenue,
+                        i.Profit
+                    })
+                    .ToList(),
+                topMarginItems = profitReport.TopMarginItems
+                    .OrderByDescending(i => i.MarginPct)
+                    .Take(10)
+                    .Select(i => new
+                    {
+                        i.Isbn,
+                        i.Title,
+                        i.MarginPct,
+                        i.Revenue,
+                        i.Profit
+                    })
+                    .ToList()
+            };
+
+        var revenuePayload = revenueReport == null
+            ? null
+            : new
+            {
+                totalRevenue = revenueReport.TotalRevenue,
+                last30Days = revenueReport.Items
+                    .OrderBy(i => i.Day)
+                    .TakeLast(30)
+                    .Select(i => new
+                    {
+                        day = i.Day,
+                        i.Revenue
+                    })
+                    .ToList()
+            };
+
+        var inventoryPayload = inventorySnapshot == null
+            ? null
+            : new
+            {
+                date = inventorySnapshot.ReportDate,
+                topSkus = inventorySnapshot.Items
+                    .OrderByDescending(i => i.QuantityOnHand)
+                    .ThenByDescending(i => i.AveragePrice)
+                    .Take(20)
+                    .Select(i => new
+                    {
+                        i.Isbn,
+                        i.Title,
+                        i.Category,
+                        quantityOnHand = i.QuantityOnHand,
+                        averagePrice = i.AveragePrice,
+                        inventoryValue = Math.Round(i.AveragePrice * i.QuantityOnHand, 2)
+                    })
+                    .ToList()
+            };
+
+        var categoryPayload = categoryShare == null
+            ? null
+            : new
+            {
+                categoryShare.Total,
+                items = categoryShare.Items
+                    .OrderByDescending(i => i.Percent)
+                    .Take(10)
+                    .Select(i => new
+                    {
+                        i.Category,
+                        i.Count,
+                        i.Percent
+                    })
+                    .ToList()
+            };
+
+        var dataPayload = new
+        {
+            timeframe = new
+            {
+                fromUtc = from,
+                toUtc = to,
+                days = Math.Round((to - from).TotalDays, 2)
+            },
+            profitReport = profitPayload,
+            revenueReport = revenuePayload,
+            inventorySnapshot = inventoryPayload,
+            categoryShare = categoryPayload
+        };
+
+        var systemPrompt = $@"Bạn là trợ lý dữ liệu thời gian thực cho quản trị viên BookStore.
+Bạn được cung cấp dữ liệu JSON (profitReport, revenueReport, inventorySnapshot, categoryShare) và lịch sử hội thoại của admin.
+Nhiệm vụ:
+- Trả lời câu hỏi dựa trên dữ liệu thực tế, không được đoán.
+- Luôn ghi rõ các chỉ số chính (doanh thu, lợi nhuận, tồn kho...) nếu liên quan.
+- Đề xuất hành động cụ thể (ví dụ: ""Lọc báo cáo tồn kho ngày hôm nay"", ""Xuất báo cáo doanh thu theo quý"", ...).
+- Nếu dữ liệu thiếu, hãy nói rõ và đề xuất bước tiếp theo.
+Định dạng câu trả lời: tối đa 4 đoạn/bullet, rõ ràng, bằng {languageLabel}.
+";
+
+        var userPayload = new
+        {
+            question = lastUserMessage.Content,
+            conversation = trimmedHistory,
+            dataset = dataPayload,
+            expectedOutput = new
+            {
+                language,
+                sections = new[]
+                {
+                    "overview",
+                    "metrics",
+                    "insights",
+                    "recommendedActions"
+                },
+                mentionDataSources = true
+            }
+        };
+
+        var aiResultJson = await CallGeminiAsync(
+            systemPrompt,
+            JsonSerializer.Serialize(userPayload),
+            cancellationToken);
+
+        if (aiResultJson == null)
+        {
+            return new ApiResponse<AdminAiChatResponse>
+            {
+                Success = false,
+                Message = "Không thể kết nối tới dịch vụ AI để trả lời câu hỏi.",
+                Errors = new List<string> { "AI service unavailable" }
+            };
+        }
+
+        var assistantMessage = new AdminAiChatMessage
+        {
+            Role = "assistant",
+            Content = aiResultJson
+        };
+
+        var updatedMessages = request.Messages
+            .Select(m => new AdminAiChatMessage
+            {
+                Role = m.Role,
+                Content = m.Content
+            })
+            .ToList();
+        updatedMessages.Add(assistantMessage);
+
+        return new ApiResponse<AdminAiChatResponse>
+        {
+            Success = true,
+            Message = "Trả lời thành công",
+            Data = new AdminAiChatResponse
+            {
+                Messages = updatedMessages,
+                PlainTextAnswer = aiResultJson,
+                MarkdownAnswer = aiResultJson,
+                DataSources = dataSources.ToList(),
+                Insights = new Dictionary<string, object>
+                {
+                    ["timeframe"] = new { fromUtc = from, toUtc = to },
+                    ["dataSources"] = dataSources.ToList()
+                }
+            }
         };
     }
 
