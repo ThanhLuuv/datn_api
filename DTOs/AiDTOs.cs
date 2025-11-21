@@ -284,4 +284,82 @@ public class AdminAiChatResponse
     public Dictionary<string, object>? Insights { get; set; }
 }
 
+public class AiSearchRequest
+{
+    [Required]
+    [MaxLength(3000)]
+    public string Query { get; set; } = string.Empty;
+
+    [Range(1, 15)]
+    public int TopK { get; set; } = 5;
+
+    public List<string>? RefTypes { get; set; }
+
+    [MaxLength(8)]
+    public string Language { get; set; } = "vi";
+
+    public bool IncludeDebugDocuments { get; set; } = true;
+}
+
+public class AiSearchDocumentDto
+{
+    public long Id { get; set; }
+    public string RefType { get; set; } = string.Empty;
+    public string RefId { get; set; } = string.Empty;
+    public double Similarity { get; set; }
+    public string Content { get; set; } = string.Empty;
+    public DateTime UpdatedAt { get; set; }
+}
+
+public class AiSearchResponse
+{
+    public string Answer { get; set; } = string.Empty;
+    public List<AiSearchDocumentDto> Documents { get; set; } = new();
+    public Dictionary<string, object?>? Metadata { get; set; }
+}
+
+public class AiSearchReindexRequest
+{
+    /// <summary>
+    /// Danh sách ref_type muốn index lại. Nếu null -> tất cả.
+    /// </summary>
+    public List<string>? RefTypes { get; set; }
+
+    /// <summary>
+    /// Xoá dữ liệu cũ trước khi index.
+    /// </summary>
+    public bool TruncateBeforeInsert { get; set; } = true;
+
+    /// <summary>
+    /// Giới hạn số sách tối đa lấy để tránh prompt quá lớn.
+    /// </summary>
+    [Range(50, 2000)]
+    public int MaxBooks { get; set; } = 800;
+
+    /// <summary>
+    /// Giới hạn số khách hàng.
+    /// </summary>
+    [Range(50, 2000)]
+    public int MaxCustomers { get; set; } = 300;
+
+    /// <summary>
+    /// Giới hạn số đơn hàng.
+    /// </summary>
+    [Range(50, 2000)]
+    public int MaxOrders { get; set; } = 400;
+
+    /// <summary>
+    /// Khoảng ngày lịch sử tính toán báo cáo tổng hợp.
+    /// </summary>
+    [Range(30, 365)]
+    public int HistoryDays { get; set; } = 180;
+}
+
+public class AiSearchReindexResponse
+{
+    public int IndexedDocuments { get; set; }
+    public List<string> RefTypes { get; set; } = new();
+    public DateTime IndexedAt { get; set; } = DateTime.UtcNow;
+}
+
 

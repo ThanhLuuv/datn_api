@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -24,6 +25,21 @@ public class AiService : IAiService
     private readonly ILogger<AiService> _logger;
 
     private const string DefaultModel = "gemini-2.5-flash";
+    private const string DefaultEmbeddingModel = "text-embedding-004";
+    private static readonly JsonSerializerOptions CamelCaseSerializerOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = false
+    };
+    private static readonly HashSet<string> SupportedKnowledgeRefTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "book",
+        "order",
+        "customer",
+        "inventory",
+        "sales_insight"
+    };
+    private static readonly CultureInfo VietnameseCulture = CultureInfo.GetCultureInfo("vi-VN");
     private static readonly IReadOnlyList<object> AdminTableSchemas = new object[]
     {
         new
@@ -1203,6 +1219,818 @@ Nhiệm vụ:
             }
         };
     }
+
+    public async Task<ApiResponse<AiSearchResponse>> SearchKnowledgeBaseAsync(
+        AiSearchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Query))
+        {
+            return new ApiResponse<AiSearchResponse>
+            {
+                Success = false,
+                Message = "Query không được để trống",
+                Errors = new List<string> { "Query is required" }
+            };
+        }
+
+        var normalizedQuery = request.Query.Trim();
+        var topK = Math.Clamp(request.TopK, 1, 15);
+        var targetRefTypes = ResolveRequestedRefTypes(request.RefTypes);
+
+        var documents = await _db.AiDocuments
+            .AsNoTracking()
+            .Where(doc => targetRefTypes.Contains(doc.RefType))
+            .ToListAsync(cancellationToken);
+
+        if (documents.Count == 0)
+        {
+            return new ApiResponse<AiSearchResponse>
+            {
+                Success = false,
+                Message = "Chưa có dữ liệu trong AI search index. Hãy chạy reindex trước.",
+                Errors = new List<string> { "AI index empty" }
+            };
+        }
+
+        var questionEmbedding = await GenerateEmbeddingVectorAsync(normalizedQuery, cancellationToken);
+        if (questionEmbedding.Length == 0)
+        {
+            return new ApiResponse<AiSearchResponse>
+            {
+                Success = false,
+                Message = "Không thể tạo embedding cho câu hỏi",
+                Errors = new List<string> { "Embedding failed" }
+            };
+        }
+
+        var scoredDocuments = new List<AiSearchDocumentDto>(documents.Count);
+        foreach (var doc in documents)
+        {
+            if (!TryParseEmbeddingVector(doc.EmbeddingJson, out var embedding) ||
+                embedding.Length != questionEmbedding.Length)
+            {
+                continue;
+            }
+
+            var similarity = CosineSimilarity(questionEmbedding, embedding);
+            if (double.IsNaN(similarity))
+            {
+                continue;
+            }
+
+            scoredDocuments.Add(new AiSearchDocumentDto
+            {
+                Id = doc.Id,
+                RefType = doc.RefType,
+                RefId = doc.RefId,
+                Content = doc.Content,
+                UpdatedAt = doc.UpdatedAt,
+                Similarity = similarity
+            });
+        }
+
+        if (scoredDocuments.Count == 0)
+        {
+            return new ApiResponse<AiSearchResponse>
+            {
+                Success = false,
+                Message = "Không tìm thấy tài liệu phù hợp trong AI index",
+                Errors = new List<string> { "No matching documents" }
+            };
+        }
+
+        var orderedDocs = scoredDocuments
+            .OrderByDescending(d => d.Similarity)
+            .ThenBy(d => d.RefType)
+            .Take(topK)
+            .ToList();
+
+        var payload = new
+        {
+            question = normalizedQuery,
+            language = string.IsNullOrWhiteSpace(request.Language)
+                ? "vi"
+                : request.Language.Trim().ToLowerInvariant(),
+            documents = orderedDocs.Select((doc, index) => new
+            {
+                rank = index + 1,
+                doc.RefType,
+                doc.RefId,
+                similarity = Math.Round(doc.Similarity, 4),
+                updatedAt = doc.UpdatedAt,
+                content = TrimContentForPrompt(doc.Content)
+            }),
+            instructions = new[]
+            {
+                "Chỉ dùng thông tin trong documents.",
+                "Nếu không đủ dữ liệu, trả lời rõ ràng là chưa có thông tin trong hệ thống.",
+                "Ưu tiên trả lời tiếng Việt khi language = 'vi'.",
+                "Liệt kê mã đơn, ISBN, danh mục khi cần trích dẫn."
+            }
+        };
+
+        const string systemPrompt = @"Bạn là trợ lý AI nội bộ của BookStore.
+- Chỉ trả lời dựa trên DOCUMENTS được cung cấp.
+- Nếu câu hỏi ngoài phạm vi dữ liệu, hãy nói rõ rằng chưa có thông tin.
+- Trình bày câu trả lời ngắn gọn, ưu tiên tiếng Việt, dùng bullet khi phù hợp.";
+
+        var aiResponseJson = await CallGeminiAsync(systemPrompt, JsonSerializer.Serialize(payload, CamelCaseSerializerOptions), cancellationToken);
+        if (string.IsNullOrWhiteSpace(aiResponseJson))
+        {
+            return new ApiResponse<AiSearchResponse>
+            {
+                Success = false,
+                Message = "Gemini không trả về kết quả",
+                Errors = new List<string> { "Gemini search failed" }
+            };
+        }
+
+        var answer = ExtractAiSearchAnswer(aiResponseJson, out var metadata);
+        var docsForResponse = request.IncludeDebugDocuments ? orderedDocs : new List<AiSearchDocumentDto>();
+
+        return new ApiResponse<AiSearchResponse>
+        {
+            Success = true,
+            Message = "OK",
+            Data = new AiSearchResponse
+            {
+                Answer = answer,
+                Documents = docsForResponse,
+                Metadata = metadata
+            }
+        };
+    }
+
+    public async Task<ApiResponse<AiSearchReindexResponse>> RebuildAiSearchIndexAsync(
+        AiSearchReindexRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var refTypes = ResolveRequestedRefTypes(request.RefTypes);
+        if (refTypes.Count == 0)
+        {
+            return new ApiResponse<AiSearchReindexResponse>
+            {
+                Success = false,
+                Message = "Không có ref_type hợp lệ để index",
+                Errors = new List<string> { "Invalid ref types" }
+            };
+        }
+
+        var seeds = await BuildAiDocumentSeedsAsync(request, refTypes, cancellationToken);
+        if (seeds.Count == 0)
+        {
+            return new ApiResponse<AiSearchReindexResponse>
+            {
+                Success = false,
+                Message = "Không có dữ liệu nào để index",
+                Errors = new List<string> { "No data for indexing" }
+            };
+        }
+
+        var targetRefTypes = new HashSet<string>(seeds.Select(s => s.RefType), StringComparer.OrdinalIgnoreCase);
+
+        if (request.TruncateBeforeInsert)
+        {
+            var toDelete = _db.AiDocuments.Where(doc => targetRefTypes.Contains(doc.RefType));
+            _db.AiDocuments.RemoveRange(toDelete);
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+
+        Dictionary<(string RefType, string RefId), AiDocument> existingDocs = new();
+        if (!request.TruncateBeforeInsert)
+        {
+            var refTypeList = targetRefTypes.ToList();
+            var refIds = seeds.Select(s => s.RefId).Distinct().ToList();
+            existingDocs = await _db.AiDocuments
+                .Where(doc => refTypeList.Contains(doc.RefType) && refIds.Contains(doc.RefId))
+                .ToDictionaryAsync(doc => (doc.RefType, doc.RefId), cancellationToken);
+        }
+
+        var indexed = 0;
+        foreach (var seed in seeds)
+        {
+            var embedding = await GenerateEmbeddingVectorAsync(seed.Content, cancellationToken);
+            if (embedding.Length == 0)
+            {
+                continue;
+            }
+
+            var embeddingJson = JsonSerializer.Serialize(embedding);
+            if (!request.TruncateBeforeInsert &&
+                existingDocs.TryGetValue((seed.RefType, seed.RefId), out var existing))
+            {
+                existing.Content = seed.Content;
+                existing.EmbeddingJson = embeddingJson;
+                existing.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                await _db.AiDocuments.AddAsync(new AiDocument
+                {
+                    RefType = seed.RefType,
+                    RefId = seed.RefId,
+                    Content = seed.Content,
+                    EmbeddingJson = embeddingJson,
+                    UpdatedAt = DateTime.UtcNow
+                }, cancellationToken);
+            }
+
+            indexed++;
+            if (indexed % 20 == 0)
+            {
+                await _db.SaveChangesAsync(cancellationToken);
+            }
+        }
+
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return new ApiResponse<AiSearchReindexResponse>
+        {
+            Success = true,
+            Message = "Reindex thành công",
+            Data = new AiSearchReindexResponse
+            {
+                IndexedDocuments = indexed,
+                IndexedAt = DateTime.UtcNow,
+                RefTypes = seeds.Select(s => s.RefType)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+            }
+        };
+    }
+
+    private async Task<List<AiDocumentSeed>> BuildAiDocumentSeedsAsync(
+        AiSearchReindexRequest request,
+        IReadOnlyList<string> refTypes,
+        CancellationToken cancellationToken)
+    {
+        var seeds = new List<AiDocumentSeed>();
+        var historyDays = Math.Clamp(request.HistoryDays, 30, 365);
+        var historySince = DateTime.UtcNow.AddDays(-historyDays);
+        var maxBooks = Math.Clamp(request.MaxBooks, 50, 2000);
+        var maxOrders = Math.Clamp(request.MaxOrders, 50, 2000);
+        var maxCustomers = Math.Clamp(request.MaxCustomers, 50, 2000);
+
+        List<DeliveredOrderLineSnapshot>? deliveredLines = null;
+        async Task<List<DeliveredOrderLineSnapshot>> EnsureDeliveredLinesAsync()
+        {
+            if (deliveredLines != null)
+            {
+                return deliveredLines;
+            }
+
+            deliveredLines = await _db.OrderLines
+                .AsNoTracking()
+                .Where(ol => ol.Order.PlacedAt >= historySince && ol.Order.Status == OrderStatus.Delivered)
+                .Select(ol => new DeliveredOrderLineSnapshot(
+                    ol.Isbn,
+                    ol.Book != null ? ol.Book.Title : null,
+                    ol.Book != null && ol.Book.Category != null ? ol.Book.Category.Name : null,
+                    ol.Qty,
+                    ol.UnitPrice,
+                    ol.Order.PlacedAt))
+                .ToListAsync(cancellationToken);
+
+            return deliveredLines;
+        }
+
+        List<OrderSummaryRow>? orderSummaries = null;
+        async Task<List<OrderSummaryRow>> EnsureOrderSummariesAsync()
+        {
+            if (orderSummaries != null)
+            {
+                return orderSummaries;
+            }
+
+            orderSummaries = await _db.Orders
+                .AsNoTracking()
+                .Where(o => o.PlacedAt >= historySince)
+                .Select(o => new OrderSummaryRow(
+                    o.OrderId,
+                    o.CustomerId,
+                    o.PlacedAt,
+                    o.Status,
+                    o.OrderLines.Sum(ol => (int?)ol.Qty) ?? 0,
+                    o.OrderLines.Sum(ol => (decimal?)(ol.Qty * ol.UnitPrice)) ?? 0m))
+                .ToListAsync(cancellationToken);
+
+            return orderSummaries;
+        }
+
+        if (refTypes.Contains("book"))
+        {
+            var delivered = await EnsureDeliveredLinesAsync();
+            var salesLookup = delivered
+                .GroupBy(line => line.Isbn)
+                .ToDictionary(
+                    g => g.Key,
+                    g => new
+                    {
+                        Quantity = g.Sum(x => x.Quantity),
+                        Revenue = g.Sum(x => x.Quantity * x.UnitPrice),
+                        LastSoldAt = g.Max(x => x.PlacedAt),
+                        Title = g.OrderByDescending(x => x.PlacedAt).FirstOrDefault()?.BookTitle
+                    });
+
+            var ratingLookup = await _db.Ratings
+                .AsNoTracking()
+                .GroupBy(r => r.Isbn)
+                .Select(g => new
+                {
+                    Isbn = g.Key,
+                    Count = g.Count(),
+                    Avg = g.Average(r => r.Stars)
+                })
+                .ToDictionaryAsync(x => x.Isbn, x => (x.Count, x.Avg), cancellationToken);
+
+            var books = await _db.Books
+                .AsNoTracking()
+                .Include(b => b.Category)
+                .Include(b => b.Publisher)
+                .Include(b => b.AuthorBooks)
+                    .ThenInclude(ab => ab.Author)
+                .OrderByDescending(b => b.UpdatedAt)
+                .Take(maxBooks)
+                .ToListAsync(cancellationToken);
+
+            foreach (var book in books)
+            {
+                var builder = new StringBuilder();
+                var authors = book.AuthorBooks
+                    .Select(ab => $"{ab.Author.FirstName} {ab.Author.LastName}".Trim())
+                    .Where(name => !string.IsNullOrWhiteSpace(name))
+                    .ToList();
+
+                builder.AppendLine("Loại dữ liệu: BOOK");
+                builder.AppendLine($"ISBN: {book.Isbn}");
+                builder.AppendLine($"Tiêu đề: {book.Title}");
+                builder.AppendLine($"Danh mục: {book.Category?.Name}");
+                builder.AppendLine($"Nhà xuất bản: {book.Publisher?.Name}");
+                builder.AppendLine($"Tác giả: {(authors.Count > 0 ? string.Join(", ", authors) : "Không rõ")}");
+                builder.AppendLine($"Giá trung bình: {FormatCurrency(book.AveragePrice)} VNĐ");
+                builder.AppendLine($"Tồn kho hiện tại: {book.Stock}");
+                builder.AppendLine($"Trạng thái: {(book.Status ? "Đang mở bán" : "Tạm ngưng")}");
+
+                if (ratingLookup.TryGetValue(book.Isbn, out var rating))
+                {
+                    builder.AppendLine($"Đánh giá trung bình: {Math.Round(rating.Item2, 2):0.##}/5 ({rating.Item1} lượt)");
+                }
+
+                if (salesLookup.TryGetValue(book.Isbn, out var sale))
+                {
+                    builder.AppendLine($"Doanh số {historyDays} ngày: {sale.Quantity} bản, doanh thu {FormatCurrency(sale.Revenue)} VNĐ");
+                    builder.AppendLine($"Lần bán gần nhất: {sale.LastSoldAt:dd/MM/yyyy HH:mm}");
+                }
+                else
+                {
+                    builder.AppendLine($"Trong {historyDays} ngày chưa ghi nhận đơn giao.");
+                }
+
+                seeds.Add(new AiDocumentSeed("book", book.Isbn, builder.ToString()));
+            }
+        }
+
+        if (refTypes.Contains("order"))
+        {
+            var orders = await _db.Orders
+                .AsNoTracking()
+                .Where(o => o.PlacedAt >= historySince)
+                .OrderByDescending(o => o.PlacedAt)
+                .Take(maxOrders)
+                .Include(o => o.Customer)
+                .Include(o => o.OrderLines)
+                    .ThenInclude(ol => ol.Book)
+                .ToListAsync(cancellationToken);
+
+            foreach (var order in orders)
+            {
+                var builder = new StringBuilder();
+                var totalAmount = order.OrderLines.Sum(line => line.Qty * line.UnitPrice);
+                var totalItems = order.OrderLines.Sum(line => line.Qty);
+                var customerName = order.Customer?.FullName ?? $"{order.ReceiverName}".Trim();
+
+                builder.AppendLine("Loại dữ liệu: ORDER");
+                builder.AppendLine($"OrderId: {order.OrderId}");
+                builder.AppendLine($"Khách hàng: {customerName} (ID {order.CustomerId})");
+                builder.AppendLine($"Trạng thái: {GetOrderStatusLabel(order.Status)}");
+                builder.AppendLine($"Ngày đặt: {order.PlacedAt:dd/MM/yyyy HH:mm}");
+                builder.AppendLine($"Địa chỉ nhận: {order.ShippingAddress}");
+                builder.AppendLine($"SĐT nhận: {order.ReceiverPhone}");
+                if (order.DeliveryAt.HasValue)
+                {
+                    builder.AppendLine($"Thời gian giao: {order.DeliveryAt:dd/MM/yyyy HH:mm}");
+                }
+                builder.AppendLine($"Tổng sản phẩm: {totalItems}");
+                builder.AppendLine($"Giá trị đơn (ước tính): {FormatCurrency(totalAmount)} VNĐ");
+                builder.AppendLine("Chi tiết sản phẩm:");
+                foreach (var line in order.OrderLines.OrderByDescending(l => l.Qty))
+                {
+                    var title = line.Book?.Title ?? line.Isbn;
+                    builder.AppendLine($"- {title} (ISBN {line.Isbn}): {line.Qty} x {FormatCurrency(line.UnitPrice)} VNĐ");
+                }
+
+                seeds.Add(new AiDocumentSeed("order", order.OrderId.ToString(CultureInfo.InvariantCulture), builder.ToString()));
+            }
+        }
+
+        if (refTypes.Contains("customer"))
+        {
+            var summaries = await EnsureOrderSummariesAsync();
+            var grouped = summaries
+                .GroupBy(row => row.CustomerId)
+                .Select(g => new CustomerAggregate(
+                    g.Key,
+                    g.Count(),
+                    g.Count(r => r.Status == OrderStatus.Delivered),
+                    g.Sum(r => r.Items),
+                    g.Sum(r => r.Revenue),
+                    g.Max(r => r.PlacedAt)))
+                .OrderByDescending(g => g.TotalSpent)
+                .Take(maxCustomers)
+                .ToList();
+
+            var customerIds = grouped.Select(g => g.CustomerId).ToList();
+            var customers = await _db.Customers
+                .AsNoTracking()
+                .Where(c => customerIds.Contains(c.CustomerId))
+                .ToDictionaryAsync(c => c.CustomerId, cancellationToken);
+
+            foreach (var aggregate in grouped)
+            {
+                if (!customers.TryGetValue(aggregate.CustomerId, out var customer))
+                {
+                    continue;
+                }
+
+                var builder = new StringBuilder();
+                builder.AppendLine("Loại dữ liệu: CUSTOMER");
+                builder.AppendLine($"CustomerId: {customer.CustomerId}");
+                builder.AppendLine($"Họ tên: {customer.FullName}");
+                builder.AppendLine($"Email: {customer.Email}");
+                builder.AppendLine($"SĐT: {customer.Phone}");
+                builder.AppendLine($"Tổng đơn trong {historyDays} ngày: {aggregate.TotalOrders}");
+                builder.AppendLine($"Đơn đã giao: {aggregate.DeliveredOrders}");
+                builder.AppendLine($"Tổng sản phẩm đã mua: {aggregate.TotalItems}");
+                builder.AppendLine($"Tổng chi tiêu ước tính: {FormatCurrency(aggregate.TotalSpent)} VNĐ");
+                builder.AppendLine($"Đơn gần nhất: {aggregate.LastOrderAt:dd/MM/yyyy HH:mm}");
+
+                seeds.Add(new AiDocumentSeed("customer", customer.CustomerId.ToString(CultureInfo.InvariantCulture), builder.ToString()));
+            }
+        }
+
+        if (refTypes.Contains("inventory"))
+        {
+            var books = await _db.Books
+                .AsNoTracking()
+                .Include(b => b.Category)
+                .ToListAsync(cancellationToken);
+
+            if (books.Count > 0)
+            {
+                var totalStock = books.Sum(b => b.Stock);
+                var totalValue = books.Sum(b => b.Stock * b.AveragePrice);
+                var lowStock = books
+                    .Where(b => b.Stock <= 5)
+                    .OrderBy(b => b.Stock)
+                    .ThenBy(b => b.Title)
+                    .Take(20)
+                    .Select(b => $"{b.Title} (ISBN {b.Isbn}) còn {b.Stock}");
+                var highStock = books
+                    .Where(b => b.Stock >= 100)
+                    .OrderByDescending(b => b.Stock)
+                    .ThenBy(b => b.Title)
+                    .Take(20)
+                    .Select(b => $"{b.Title} (ISBN {b.Isbn}) tồn {b.Stock}");
+                var categorySummary = books
+                    .GroupBy(b => b.Category?.Name ?? "Không rõ")
+                    .Select(g => new
+                    {
+                        Category = g.Key,
+                        Stock = g.Sum(b => b.Stock),
+                        Value = g.Sum(b => b.Stock * b.AveragePrice)
+                    })
+                    .OrderByDescending(g => g.Stock)
+                    .Take(10)
+                    .ToList();
+
+                var builder = new StringBuilder();
+                builder.AppendLine("Loại dữ liệu: INVENTORY");
+                builder.AppendLine($"Snapshot (UTC): {DateTime.UtcNow:yyyy-MM-dd HH:mm}");
+                builder.AppendLine($"Tổng đầu sách: {books.Count}");
+                builder.AppendLine($"Tổng số lượng tồn: {totalStock}");
+                builder.AppendLine($"Giá trị tồn kho ước tính: {FormatCurrency(totalValue)} VNĐ");
+                builder.AppendLine("Top danh mục theo tồn kho:");
+                foreach (var category in categorySummary)
+                {
+                    builder.AppendLine($"- {category.Category}: {category.Stock} bản (~{FormatCurrency(category.Value)} VNĐ)");
+                }
+
+                if (lowStock.Any())
+                {
+                    builder.AppendLine("Sản phẩm sắp hết hàng (<=5 cuốn):");
+                    foreach (var entry in lowStock)
+                    {
+                        builder.AppendLine($"- {entry}");
+                    }
+                }
+
+                if (highStock.Any())
+                {
+                    builder.AppendLine("Sản phẩm tồn kho cao (>=100 cuốn):");
+                    foreach (var entry in highStock)
+                    {
+                        builder.AppendLine($"- {entry}");
+                    }
+                }
+
+                seeds.Add(new AiDocumentSeed("inventory", "global-inventory", builder.ToString()));
+            }
+        }
+
+        if (refTypes.Contains("sales_insight"))
+        {
+            var delivered = await EnsureDeliveredLinesAsync();
+            var summaries = await EnsureOrderSummariesAsync();
+            var totalRevenue = delivered.Sum(line => line.Quantity * line.UnitPrice);
+            var totalQuantity = delivered.Sum(line => line.Quantity);
+            var deliveredOrders = summaries.Count(r => r.Status == OrderStatus.Delivered);
+            var cancelledOrders = summaries.Count(r => r.Status == OrderStatus.Cancelled);
+            var totalOrders = summaries.Count;
+            var avgOrderValue = deliveredOrders > 0 ? totalRevenue / deliveredOrders : 0m;
+
+            var topDays = delivered
+                .GroupBy(line => line.PlacedAt.Date)
+                .Select(g => new
+                {
+                    Day = g.Key,
+                    Revenue = g.Sum(x => x.Quantity * x.UnitPrice)
+                })
+                .OrderByDescending(g => g.Revenue)
+                .Take(7)
+                .ToList();
+
+            var topCategories = delivered
+                .GroupBy(line => line.CategoryName ?? "Không rõ")
+                .Select(g => new
+                {
+                    Category = g.Key,
+                    Revenue = g.Sum(x => x.Quantity * x.UnitPrice),
+                    Quantity = g.Sum(x => x.Quantity)
+                })
+                .OrderByDescending(g => g.Revenue)
+                .Take(8)
+                .ToList();
+
+            var topBooks = delivered
+                .GroupBy(line => new { line.Isbn, line.BookTitle })
+                .Select(g => new
+                {
+                    g.Key.Isbn,
+                    Title = string.IsNullOrWhiteSpace(g.Key.BookTitle) ? g.Key.Isbn : g.Key.BookTitle,
+                    Revenue = g.Sum(x => x.Quantity * x.UnitPrice),
+                    Quantity = g.Sum(x => x.Quantity)
+                })
+                .OrderByDescending(g => g.Revenue)
+                .Take(10)
+                .ToList();
+
+            var builder = new StringBuilder();
+            builder.AppendLine("Loại dữ liệu: SALES_INSIGHT");
+            builder.AppendLine($"Khoảng thời gian: {historySince:dd/MM/yyyy} - {DateTime.UtcNow:dd/MM/yyyy}");
+            builder.AppendLine($"Tổng đơn tạo: {totalOrders}, đã giao: {deliveredOrders}, huỷ: {cancelledOrders}");
+            builder.AppendLine($"Doanh thu (đơn giao): {FormatCurrency(totalRevenue)} VNĐ");
+            builder.AppendLine($"Giá trị trung bình mỗi đơn giao: {FormatCurrency(avgOrderValue)} VNĐ");
+            builder.AppendLine($"Tổng số lượng sách bán ra: {totalQuantity}");
+            builder.AppendLine("Top ngày doanh thu:");
+            foreach (var day in topDays)
+            {
+                builder.AppendLine($"- {day.Day:dd/MM}: {FormatCurrency(day.Revenue)} VNĐ");
+            }
+            builder.AppendLine("Top danh mục:");
+            foreach (var cat in topCategories)
+            {
+                builder.AppendLine($"- {cat.Category}: {cat.Quantity} bản ({FormatCurrency(cat.Revenue)} VNĐ)");
+            }
+            builder.AppendLine("Top sách bán chạy:");
+            foreach (var book in topBooks)
+            {
+                builder.AppendLine($"- {book.Title} (ISBN {book.Isbn}): {book.Quantity} bản ({FormatCurrency(book.Revenue)} VNĐ)");
+            }
+
+            seeds.Add(new AiDocumentSeed("sales_insight", $"sales-{DateTime.UtcNow:yyyyMMddHHmm}", builder.ToString()));
+        }
+
+        return seeds;
+    }
+
+    private async Task<float[]> GenerateEmbeddingVectorAsync(string text, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return Array.Empty<float>();
+        }
+
+        if (!TryPrepareGeminiRequest(out _, out var baseUrl, out var apiKey))
+        {
+            return Array.Empty<float>();
+        }
+
+        var embeddingModel = Environment.GetEnvironmentVariable("Gemini__EmbeddingModel")
+            ?? _configuration["Gemini:EmbeddingModel"]
+            ?? DefaultEmbeddingModel;
+
+        var url = $"{baseUrl}/v1beta/models/{embeddingModel}:embedContent?key={apiKey}";
+        var payload = new
+        {
+            content = new
+            {
+                parts = new[]
+                {
+                    new { text = text }
+                }
+            }
+        };
+
+        using var requestMessage = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+        };
+
+        try
+        {
+            var response = await _httpClient.SendAsync(requestMessage, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                var content = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogWarning("Gemini embedding API error {StatusCode}: {Content}", response.StatusCode, content);
+                return Array.Empty<float>();
+            }
+
+            using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            if (!doc.RootElement.TryGetProperty("embedding", out var embeddingElement) ||
+                !embeddingElement.TryGetProperty("values", out var valuesElement) ||
+                valuesElement.ValueKind != JsonValueKind.Array)
+            {
+                return Array.Empty<float>();
+            }
+
+            var vector = new List<float>();
+            foreach (var value in valuesElement.EnumerateArray())
+            {
+                if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number))
+                {
+                    vector.Add((float)number);
+                }
+            }
+
+            return vector.ToArray();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogError(ex, "Lỗi khi gọi Gemini embedding API");
+            return Array.Empty<float>();
+        }
+    }
+
+    private bool TryParseEmbeddingVector(string embeddingJson, out float[] vector)
+    {
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<List<float>>(embeddingJson);
+            if (parsed == null || parsed.Count == 0)
+            {
+                vector = Array.Empty<float>();
+                return false;
+            }
+
+            vector = parsed.ToArray();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Không thể parse embedding_json");
+            vector = Array.Empty<float>();
+            return false;
+        }
+    }
+
+    private static double CosineSimilarity(IReadOnlyList<float> a, IReadOnlyList<float> b)
+    {
+        if (a.Count == 0 || b.Count == 0 || a.Count != b.Count)
+        {
+            return 0;
+        }
+
+        double dot = 0;
+        double normA = 0;
+        double normB = 0;
+
+        for (var i = 0; i < a.Count; i++)
+        {
+            dot += a[i] * b[i];
+            normA += a[i] * a[i];
+            normB += b[i] * b[i];
+        }
+
+        if (normA == 0 || normB == 0)
+        {
+            return 0;
+        }
+
+        return dot / (Math.Sqrt(normA) * Math.Sqrt(normB));
+    }
+
+    private static List<string> ResolveRequestedRefTypes(IEnumerable<string>? requested)
+    {
+        if (requested == null)
+        {
+            return SupportedKnowledgeRefTypes.ToList();
+        }
+
+        var normalized = requested
+            .Select(r => r?.Trim().ToLowerInvariant())
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Select(r => r!)
+            .Where(r => SupportedKnowledgeRefTypes.Contains(r))
+            .Distinct()
+            .ToList();
+
+        return normalized.Count == 0 ? SupportedKnowledgeRefTypes.ToList() : normalized;
+    }
+
+    private string ExtractAiSearchAnswer(string rawJson, out Dictionary<string, object?>? metadata)
+    {
+        metadata = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(rawJson);
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (root.TryGetProperty("answer", out var answerProp) && answerProp.ValueKind == JsonValueKind.String)
+                {
+                    var answer = answerProp.GetString() ?? string.Empty;
+                metadata = root.EnumerateObject()
+                        .Where(prop => !prop.NameEquals("answer"))
+                        .ToDictionary(
+                            prop => prop.Name,
+                        prop => JsonSerializer.Deserialize<object?>(prop.Value.GetRawText()));
+                    return answer;
+                }
+
+            metadata = new Dictionary<string, object?>
+                {
+                    ["rawResponse"] = JsonSerializer.Deserialize<object?>(root.GetRawText())
+                };
+                return root.GetRawText();
+            }
+
+            if (root.ValueKind == JsonValueKind.String)
+            {
+                return root.GetString() ?? string.Empty;
+            }
+
+        metadata = new Dictionary<string, object?>
+            {
+                ["rawResponse"] = JsonSerializer.Deserialize<object?>(rawJson) ?? rawJson
+            };
+            return root.GetRawText();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Không thể parse JSON từ AI search");
+            metadata = new Dictionary<string, object?>
+            {
+                ["rawResponse"] = rawJson
+            };
+            return rawJson;
+        }
+    }
+
+    private static string TrimContentForPrompt(string content, int maxLength = 3000)
+    {
+        if (string.IsNullOrEmpty(content))
+        {
+            return string.Empty;
+        }
+
+        return content.Length <= maxLength ? content : content[..maxLength];
+    }
+
+    private static string GetOrderStatusLabel(OrderStatus status)
+        => status switch
+        {
+            OrderStatus.PendingConfirmation => "Chờ xác nhận",
+            OrderStatus.Confirmed => "Đã xác nhận",
+            OrderStatus.Delivered => "Đã giao",
+            OrderStatus.Cancelled => "Đã huỷ",
+            _ => status.ToString()
+        };
+
+    private static string FormatCurrency(decimal value)
+        => string.Format(VietnameseCulture, "{0:0,0}", value);
 
     private async Task<(object Snapshot, HashSet<string> DataSources)> BuildAdminDataSnapshotAsync(
         DateTime from,
@@ -2402,6 +3230,11 @@ Trả về đúng JSON theo cấu trúc:
             }
         }
     }
+
+    private sealed record AiDocumentSeed(string RefType, string RefId, string Content);
+    private sealed record DeliveredOrderLineSnapshot(string Isbn, string? BookTitle, string? CategoryName, int Quantity, decimal UnitPrice, DateTime PlacedAt);
+    private sealed record OrderSummaryRow(long OrderId, long CustomerId, DateTime PlacedAt, OrderStatus Status, int Items, decimal Revenue);
+    private sealed record CustomerAggregate(long CustomerId, int TotalOrders, int DeliveredOrders, int TotalItems, decimal TotalSpent, DateTime LastOrderAt);
 
     private static string NormalizeTitleKey(string? title)
         => string.IsNullOrWhiteSpace(title)

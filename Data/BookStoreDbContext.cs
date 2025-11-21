@@ -60,12 +60,25 @@ public class BookStoreDbContext : DbContext
     public DbSet<MonthlyRevenueRow> MonthlyRevenueRows { get; set; }
     public DbSet<QuarterlyRevenueRow> QuarterlyRevenueRows { get; set; }
 
+    // AI search knowledge base
+    public DbSet<AiDocument> AiDocuments { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
         // Keyless entity for stored procedure mapping
         modelBuilder.Entity<MonthlyRevenueRow>().HasNoKey();
         modelBuilder.Entity<QuarterlyRevenueRow>().HasNoKey();
+
+        modelBuilder.Entity<AiDocument>(entity =>
+        {
+            entity.HasIndex(doc => new { doc.RefType, doc.RefId }).IsUnique();
+            entity.Property(doc => doc.RefType).HasMaxLength(100);
+            entity.Property(doc => doc.RefId).HasMaxLength(120);
+            entity.Property(doc => doc.UpdatedAt)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .ValueGeneratedOnAddOrUpdate();
+        });
 
         // Configure Account relationships
         modelBuilder.Entity<Account>()

@@ -44,6 +44,7 @@ pipeline {
           # Export biến môi trường để docker-compose có thể đọc được
           export GEMINI_API_KEY="${GEMINI_API_KEY}"
           export GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}"
+          export GEMINI_EMBED_MODEL="${GEMINI_EMBED_MODEL:-text-embedding-004}"
           export GEMINI_BASE_URL="${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}"
           # Đảm bảo biến môi trường Gemini được truyền vào container
           # GEMINI_API_KEY được lấy từ Jenkins credentials: 'bookstore-gemini-api-key'
@@ -57,6 +58,7 @@ pipeline {
           # Truyền biến môi trường trực tiếp vào docker compose
           GEMINI_API_KEY="${GEMINI_API_KEY}" \
           GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}" \
+          GEMINI_EMBED_MODEL="${GEMINI_EMBED_MODEL:-text-embedding-004}" \
           GEMINI_BASE_URL="${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}" \
           docker compose -f ${COMPOSE_FILE} up -d
           
@@ -90,7 +92,7 @@ pipeline {
       steps {
         sh '''
           for i in {1..30}; do
-            if curl -fsS http://103.221.223.183:${HEALTH_PORT}${HEALTH_PATH} > /dev/null; then
+            if curl -fsS http://103.221.223.103:${HEALTH_PORT}${HEALTH_PATH} > /dev/null; then
               echo "Healthy on :${HEALTH_PORT}"; exit 0
             fi
             sleep 2

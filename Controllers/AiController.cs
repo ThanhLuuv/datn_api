@@ -166,6 +166,57 @@ public class AiController : ControllerBase
 
         return BadRequest(result);
     }
+
+    /// <summary>
+    /// AI search (RAG) trả lời câu hỏi dựa trên dữ liệu nội bộ đã index.
+    /// </summary>
+    [HttpPost("search")]
+    [Authorize(Roles = "ADMIN")]
+    public async Task<ActionResult<ApiResponse<AiSearchResponse>>> SearchKnowledgeBase(
+        [FromBody] AiSearchRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!ModelState.IsValid)
+        {
+            var errors = ModelState.Values
+                .SelectMany(v => v.Errors)
+                .Select(e => e.ErrorMessage)
+                .ToList();
+
+            return BadRequest(new ApiResponse<AiSearchResponse>
+            {
+                Success = false,
+                Message = "Dữ liệu không hợp lệ",
+                Errors = errors
+            });
+        }
+
+        var result = await _aiService.SearchKnowledgeBaseAsync(request, cancellationToken);
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+
+        return BadRequest(result);
+    }
+
+    /// <summary>
+    /// Rebuild index cho AI search (chỉ Admin).
+    /// </summary>
+    [HttpPost("search/reindex")]
+    [Authorize(Roles = "ADMIN")]
+    public async Task<ActionResult<ApiResponse<AiSearchReindexResponse>>> RebuildKnowledgeBase(
+        [FromBody] AiSearchReindexRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _aiService.RebuildAiSearchIndexAsync(request, cancellationToken);
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+
+        return BadRequest(result);
+    }
 }
 
 
