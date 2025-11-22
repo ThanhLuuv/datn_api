@@ -447,7 +447,7 @@ public class PurchaseOrderService : IPurchaseOrderService
 
             var newLineIds = updatePurchaseOrderDto.Lines
                 .Where(l => l.PoLineId.HasValue)
-                .Select(l => l.PoLineId.Value)
+                .Select(l => l.PoLineId!.Value)
                 .ToList();
 
             var linesToRemove = existingLineIds.Except(newLineIds).ToList();
@@ -471,7 +471,7 @@ public class PurchaseOrderService : IPurchaseOrderService
             foreach (var lineDto in linesToUpdate)
             {
                 var line = purchaseOrder.PurchaseOrderLines
-                    .First(pol => pol.PoLineId == lineDto.PoLineId.Value);
+                    .First(pol => pol.PoLineId == lineDto.PoLineId!.Value);
                 line.Isbn = lineDto.Isbn;
                 line.QtyOrdered = lineDto.QtyOrdered;
                 line.UnitPrice = lineDto.UnitPrice;

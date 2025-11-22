@@ -88,7 +88,7 @@ public class PublisherController : ControllerBase
         
         if (result.Success)
         {
-            return CreatedAtAction(nameof(GetPublisher), new { publisherId = result.Data.PublisherId }, result);
+            return CreatedAtAction(nameof(GetPublisher), new { publisherId = result.Data?.PublisherId }, result);
         }
 
         return BadRequest(result);

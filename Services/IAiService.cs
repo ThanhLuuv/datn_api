@@ -29,15 +29,6 @@ public interface IAiService
     /// </summary>
     Task<ApiResponse<AdminAiImportBookResponse>> ImportAiSuggestedBookAsync(AdminAiImportBookRequest request, CancellationToken cancellationToken = default);
 
-    /// <summary>
-    /// Tìm kiếm kiến thức nội bộ bằng AI Search (RAG).
-    /// </summary>
-    Task<ApiResponse<AiSearchResponse>> SearchKnowledgeBaseAsync(AiSearchRequest request, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Rebuild / cập nhật index cho AI Search.
-    /// </summary>
-    Task<ApiResponse<AiSearchReindexResponse>> RebuildAiSearchIndexAsync(AiSearchReindexRequest request, CancellationToken cancellationToken = default);
 }
 
 

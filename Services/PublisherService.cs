@@ -40,9 +40,9 @@ public class PublisherService : IPublisherService
                 {
                     PublisherId = p.PublisherId,
                     Name = p.Name,
-                    Address = p.Address,
-                    Email = p.Email,
-                    Phone = p.Phone,
+                    Address = p.Address ?? string.Empty,
+                    Email = p.Email ?? string.Empty,
+                    Phone = p.Phone ?? string.Empty,
                     BookCount = _context.Books.Count(b => b.PublisherId == p.PublisherId)
                 })
                 .ToListAsync();
@@ -86,9 +86,9 @@ public class PublisherService : IPublisherService
                 {
                     PublisherId = p.PublisherId,
                     Name = p.Name,
-                    Address = p.Address,
-                    Email = p.Email,
-                    Phone = p.Phone,
+                    Address = p.Address ?? string.Empty,
+                    Email = p.Email ?? string.Empty,
+                    Phone = p.Phone ?? string.Empty,
                     BookCount = _context.Books.Count(b => b.PublisherId == p.PublisherId)
                 })
                 .FirstOrDefaultAsync();

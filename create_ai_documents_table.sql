@@ -23,3 +23,4 @@ FROM information_schema.TABLES
 WHERE TABLE_SCHEMA = 'thienduong_LTDB' 
   AND TABLE_NAME = 'ai_documents';
 
+

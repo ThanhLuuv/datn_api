@@ -11,10 +11,12 @@ namespace BookStore.Api.Controllers;
 public class AiController : ControllerBase
 {
     private readonly IAiService _aiService;
+    private readonly IAiSearchService _aiSearchService;
 
-    public AiController(IAiService aiService)
+    public AiController(IAiService aiService, IAiSearchService aiSearchService)
     {
         _aiService = aiService;
+        _aiSearchService = aiSearchService;
     }
 
     /// <summary>
@@ -191,7 +193,7 @@ public class AiController : ControllerBase
             });
         }
 
-        var result = await _aiService.SearchKnowledgeBaseAsync(request, cancellationToken);
+        var result = await _aiSearchService.SearchKnowledgeBaseAsync(request, cancellationToken);
         if (result.Success)
         {
             return Ok(result);
@@ -209,7 +211,7 @@ public class AiController : ControllerBase
         [FromBody] AiSearchReindexRequest request,
         CancellationToken cancellationToken)
     {
-        var result = await _aiService.RebuildAiSearchIndexAsync(request, cancellationToken);
+        var result = await _aiSearchService.RebuildAiSearchIndexAsync(request, cancellationToken);
         if (result.Success)
         {
             return Ok(result);

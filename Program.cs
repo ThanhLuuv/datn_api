@@ -173,7 +173,9 @@ builder.Services.AddScoped<IEmployeeService, EmployeeService>();
 builder.Services.AddScoped<IDepartmentService, DepartmentService>();
 
 // AI services (Gemini integration)
-builder.Services.AddHttpClient<IAiService, AiService>();
+builder.Services.AddHttpClient<IGeminiClient, GeminiClient>();
+builder.Services.AddScoped<IAiSearchService, AiSearchService>();
+builder.Services.AddScoped<IAiService, AiService>();
 
 // Health Checks
 builder.Services.AddHealthChecks()
