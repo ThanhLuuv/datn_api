@@ -21,18 +21,14 @@ public class AiSearchService : IAiSearchService
         WriteIndented = false
     };
 
+    // Chỉ hỗ trợ đơn hàng và các entity liên quan (book, customer, invoice để có context)
     private static readonly HashSet<string> SupportedKnowledgeRefTypes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "book",
         "order",
         "order_line",
-        "customer",
-        "purchase_order",
-        "purchase_order_line",
-        "goods_receipt",
-        "inventory",
-        "sales_insight",
-        "category"
+        "invoice",   // Hóa đơn liên quan đến đơn hàng
+        "book",      // Để có thông tin sách trong đơn hàng
+        "customer"   // Để có thông tin khách hàng
     };
 
     private static readonly CultureInfo VietnameseCulture = CultureInfo.GetCultureInfo("vi-VN");
@@ -63,7 +59,42 @@ public class AiSearchService : IAiSearchService
 
         var normalizedQuery = request.Query.Trim();
         var topK = Math.Clamp(request.TopK, 1, 15);
-        var targetRefTypes = ResolveRequestedRefTypes(request.RefTypes);
+        
+        // Bước 1: Nếu RefTypes không được chỉ định, tự động suggest dựa trên query
+        var requestedRefTypes = request.RefTypes;
+        if (requestedRefTypes == null || requestedRefTypes.Count == 0)
+        {
+            var suggestedRefTypes = SuggestRefTypesFromQuery(normalizedQuery);
+            _logger.LogInformation(
+                "AI Search - Query '{Query}' không có RefTypes, tự động suggest: [{Suggested}]",
+                normalizedQuery,
+                string.Join(", ", suggestedRefTypes));
+            requestedRefTypes = suggestedRefTypes;
+        }
+        
+        var targetRefTypes = ResolveRequestedRefTypes(requestedRefTypes);
+
+        // Bước 2: Kiểm tra xem các refTypes có dữ liệu trong DB không
+        var availableRefTypes = await _db.AiDocuments
+            .AsNoTracking()
+            .Where(doc => targetRefTypes.Contains(doc.RefType))
+            .Select(doc => doc.RefType)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        var missingRefTypes = targetRefTypes
+            .Where(rt => !availableRefTypes.Contains(rt, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+
+        if (missingRefTypes.Count > 0)
+        {
+            _logger.LogWarning(
+                "AI Search - Query '{Query}' yêu cầu RefTypes [{Requested}] nhưng DB chỉ có [{Available}]. Thiếu: [{Missing}]",
+                normalizedQuery,
+                string.Join(", ", targetRefTypes),
+                string.Join(", ", availableRefTypes),
+                string.Join(", ", missingRefTypes));
+        }
 
         var documents = await _db.AiDocuments
             .AsNoTracking()
@@ -72,11 +103,27 @@ public class AiSearchService : IAiSearchService
 
         if (documents.Count == 0)
         {
+            var allAvailableRefTypes = await _db.AiDocuments
+                .AsNoTracking()
+                .Select(doc => doc.RefType)
+                .Distinct()
+                .ToListAsync(cancellationToken);
+
+            var message = "Chưa có dữ liệu trong AI search index cho các RefTypes được yêu cầu.";
+            if (allAvailableRefTypes.Count > 0)
+            {
+                message += $" DB hiện có: [{string.Join(", ", allAvailableRefTypes)}]. Hãy chạy reindex với RefTypes phù hợp.";
+            }
+            else
+            {
+                message += " Hãy chạy reindex trước.";
+            }
+
             return new ApiResponse<AiSearchResponse>
             {
                 Success = false,
-                Message = "Chưa có dữ liệu trong AI search index. Hãy chạy reindex trước.",
-                Errors = new List<string> { "AI index empty" }
+                Message = message,
+                Errors = new List<string> { "AI index empty for requested ref types" }
             };
         }
 
@@ -92,11 +139,11 @@ public class AiSearchService : IAiSearchService
         }
 
         var scoredDocuments = new List<AiSearchDocumentDto>(documents.Count);
-        var similarityThreshold = 0.1; // Giảm từ 0.2 xuống 0.1 để tìm được nhiều documents hơn
         var parsedCount = 0;
         var skippedCount = 0;
-        var topSimilarities = new List<double>();
+        var allSimilarities = new List<double>();
 
+        // Bước 1: Tính similarity cho tất cả documents
         foreach (var doc in documents)
         {
             if (!TryParseEmbeddingVector(doc.EmbeddingJson, out var embedding) ||
@@ -109,57 +156,146 @@ public class AiSearchService : IAiSearchService
             parsedCount++;
             var similarity = CosineSimilarity(questionEmbedding, embedding);
             
-            // Lưu top 5 similarities để debug (kể cả khi < threshold)
-            if (topSimilarities.Count < 5 || similarity > topSimilarities.Min())
+            if (!double.IsNaN(similarity))
             {
-                topSimilarities.Add(similarity);
-                if (topSimilarities.Count > 5)
+                allSimilarities.Add(similarity);
+                scoredDocuments.Add(new AiSearchDocumentDto
                 {
-                    topSimilarities.Remove(topSimilarities.Min());
-                }
+                    Id = doc.Id,
+                    RefType = doc.RefType,
+                    RefId = doc.RefId,
+                    Content = doc.Content,
+                    UpdatedAt = doc.UpdatedAt,
+                    Similarity = similarity
+                });
             }
-
-            if (double.IsNaN(similarity) || similarity < similarityThreshold)
-            {
-                continue;
-            }
-
-            scoredDocuments.Add(new AiSearchDocumentDto
-            {
-                Id = doc.Id,
-                RefType = doc.RefType,
-                RefId = doc.RefId,
-                Content = doc.Content,
-                UpdatedAt = doc.UpdatedAt,
-                Similarity = similarity
-            });
         }
 
+        // Bước 2: Tính adaptive threshold dựa trên distribution
+        var similarityThreshold = CalculateAdaptiveThreshold(allSimilarities);
+
+        // Bước 3: Filter documents theo threshold
+        var filteredDocs = scoredDocuments
+            .Where(d => d.Similarity >= similarityThreshold)
+            .ToList();
+
+        var topSimilarities = filteredDocs
+            .OrderByDescending(d => d.Similarity)
+            .Take(5)
+            .Select(d => d.Similarity)
+            .ToList();
+
         _logger.LogInformation(
-            "AI Search - Query: '{Query}', Total docs: {Total}, Parsed: {Parsed}, Skipped: {Skipped}, Matched (>= {Threshold}): {Matched}, Top similarities: [{TopSims}]",
+            "AI Search - Query: '{Query}', Total docs: {Total}, Parsed: {Parsed}, Skipped: {Skipped}, Threshold: {Threshold:F4}, Matched: {Matched}, Top similarities: [{TopSims}]",
             normalizedQuery,
             documents.Count,
             parsedCount,
             skippedCount,
             similarityThreshold,
-            scoredDocuments.Count,
-            string.Join(", ", topSimilarities.OrderByDescending(s => s).Select(s => s.ToString("F4"))));
+            filteredDocs.Count,
+            string.Join(", ", topSimilarities.Select(s => s.ToString("F4"))));
 
-        if (scoredDocuments.Count == 0)
+        if (filteredDocs.Count == 0)
         {
+            var refTypesInResults = documents
+                .GroupBy(d => d.RefType)
+                .Select(g => $"{g.Key} ({g.Count()})")
+                .ToList();
+
+            var message = $"Không tìm thấy tài liệu phù hợp (similarity >= {similarityThreshold:F4}). " +
+                         $"Đã tìm trong {documents.Count} documents của RefTypes: [{string.Join(", ", availableRefTypes)}]. " +
+                         $"Có thể do: (1) Query không khớp với nội dung, (2) Threshold quá cao, hoặc (3) Cần reindex với dữ liệu mới hơn.";
+
+            if (missingRefTypes.Count > 0)
+            {
+                message += $" Lưu ý: RefTypes [{string.Join(", ", missingRefTypes)}] không có dữ liệu trong DB.";
+            }
+
             return new ApiResponse<AiSearchResponse>
             {
                 Success = false,
-                Message = "Không tìm thấy tài liệu phù hợp trong AI index",
-                Errors = new List<string> { "No matching documents" }
+                Message = message,
+                Errors = new List<string> { "No matching documents above threshold" },
+                Data = new AiSearchResponse
+                {
+                    Answer = string.Empty,
+                    Documents = request.IncludeDebugDocuments ? new List<AiSearchDocumentDto>() : new List<AiSearchDocumentDto>(),
+                    Metadata = new Dictionary<string, object?>
+                    {
+                        ["requestedRefTypes"] = targetRefTypes,
+                        ["availableRefTypes"] = availableRefTypes,
+                        ["missingRefTypes"] = missingRefTypes,
+                        ["similarityThreshold"] = similarityThreshold,
+                        ["totalDocumentsSearched"] = documents.Count,
+                        ["refTypesBreakdown"] = refTypesInResults
+                    }
+                }
             };
         }
 
-        var orderedDocs = scoredDocuments
-            .OrderByDescending(d => d.Similarity)
-            .ThenBy(d => d.RefType)
-            .Take(topK)
+        // Bước 4: Ranking và lấy topK
+        // Boost RefTypes phù hợp với query
+        var queryLower = normalizedQuery.ToLowerInvariant();
+        var prioritizedRefTypes = GetPrioritizedRefTypesForQuery(queryLower);
+        
+        // Tính boost score cho mỗi document
+        var docsWithBoost = filteredDocs.Select(doc =>
+        {
+            var boost = 0.0;
+            // Boost nếu RefType được ưu tiên cho query này
+            if (prioritizedRefTypes.Contains(doc.RefType, StringComparer.OrdinalIgnoreCase))
+            {
+                boost = 0.1; // Boost 0.1 điểm similarity
+            }
+            // Boost thêm nếu là documents mới (cho queries về "gần đây", "mới nhất")
+            if ((queryLower.Contains("gần") || queryLower.Contains("mới") || queryLower.Contains("recent") || queryLower.Contains("latest")) &&
+                doc.UpdatedAt >= DateTime.UtcNow.AddDays(-30))
+            {
+                boost += 0.05;
+            }
+            
+            return new
+            {
+                Doc = doc,
+                BoostedSimilarity = doc.Similarity + boost
+            };
+        }).ToList();
+
+        // Điều chỉnh topK động: nếu có nhiều documents match, tăng topK để có nhiều context hơn
+        var adjustedTopK = topK;
+        if (filteredDocs.Count > 20 && topK < 10)
+        {
+            // Nếu có >20 documents match và topK < 10, tăng lên 10
+            adjustedTopK = Math.Min(10, filteredDocs.Count);
+            _logger.LogInformation(
+                "AI Search - Adjusted topK from {Original} to {Adjusted} due to {Count} matching documents",
+                topK, adjustedTopK, filteredDocs.Count);
+        }
+        else if (filteredDocs.Count > 10 && topK < 8)
+        {
+            // Nếu có >10 documents match và topK < 8, tăng lên 8
+            adjustedTopK = Math.Min(8, filteredDocs.Count);
+        }
+
+        // Ranking: Ưu tiên boosted similarity, sau đó là similarity gốc, rồi UpdatedAt
+        var orderedDocs = docsWithBoost
+            .OrderByDescending(x => x.BoostedSimilarity)
+            .ThenByDescending(x => x.Doc.Similarity)
+            .ThenByDescending(x => x.Doc.UpdatedAt)
+            .ThenBy(x => x.Doc.RefType)
+            .Select(x => x.Doc)
+            .Take(adjustedTopK)
             .ToList();
+
+        // Log RefTypes được chọn để debug
+        var selectedRefTypes = orderedDocs
+            .GroupBy(d => d.RefType)
+            .Select(g => $"{g.Key} ({g.Count()})")
+            .ToList();
+        _logger.LogInformation(
+            "AI Search - Selected {Count} documents for AI, RefTypes breakdown: [{RefTypes}]",
+            orderedDocs.Count,
+            string.Join(", ", selectedRefTypes));
 
         var payload = new
         {
@@ -174,26 +310,56 @@ public class AiSearchService : IAiSearchService
                 doc.RefId,
                 similarity = Math.Round(doc.Similarity, 4),
                 updatedAt = doc.UpdatedAt,
+                updatedAtFormatted = doc.UpdatedAt.ToString("dd/MM/yyyy HH:mm", VietnameseCulture),
                 content = TrimContentForPrompt(doc.Content)
             }),
             instructions = new[]
             {
-                "Chỉ dùng thông tin trong documents.",
+                "Chỉ dùng thông tin trong documents về đơn hàng, khách hàng và sách.",
                 "Nếu không đủ dữ liệu, trả lời rõ ràng là chưa có thông tin trong hệ thống.",
                 "Ưu tiên trả lời tiếng Việt khi language = 'vi'.",
-                "Liệt kê mã đơn, ISBN, danh mục khi cần trích dẫn."
+                "Luôn trích dẫn OrderId, InvoiceId, InvoiceNumber, ISBN, CustomerId khi có trong documents.",
+                "Khi câu hỏi về 'đơn hàng', 'order' - tìm trong documents có RefType = 'order' hoặc 'order_line'.",
+                "Khi câu hỏi về 'hóa đơn', 'invoice', 'thanh toán' - tìm trong documents có RefType = 'invoice' hoặc 'order'.",
+                "Khi câu hỏi về 'khách hàng', 'customer' - tìm trong documents có RefType = 'customer' hoặc 'order'.",
+                "Khi câu hỏi về 'sách', 'book' - tìm trong documents có RefType = 'book' hoặc 'order_line'.",
+                "Khi câu hỏi về 'gần đây', 'mới nhất' - dùng trường updatedAt để xác định documents mới nhất.",
+                "Documents được sắp xếp theo độ liên quan (similarity) và thời gian cập nhật (updatedAt)."
             }
         };
 
-        const string systemPrompt = @"Bạn là trợ lý AI nội bộ của hệ thống quản lý nhà sách BookStore.
-Nhiệm vụ:
-- Chỉ trả lời dựa trên DOCUMENTS được cung cấp bên dưới.
-- Nếu câu hỏi ngoài phạm vi dữ liệu trong documents, hãy trả lời rõ ràng: 'Hiện tại tôi chưa có đủ dữ liệu trong hệ thống để trả lời chính xác câu hỏi này.'
-- Trình bày câu trả lời ngắn gọn, rõ ràng, ưu tiên tiếng Việt.
-- Khi liệt kê, dùng bullet points (-) hoặc đánh số.
-- Luôn trích dẫn mã đơn (OrderId), ISBN, CustomerId khi có trong documents.
-- Với câu hỏi về số liệu, hãy đưa ra con số cụ thể từ documents.
-- Với câu hỏi về sách, ưu tiên thông tin: tiêu đề, ISBN, giá, tồn kho, đánh giá, doanh số.";
+        const string systemPrompt = @"Bạn là trợ lý AI chuyên về đơn hàng của hệ thống quản lý nhà sách BookStore.
+Nhiệm vụ chính: Trả lời các câu hỏi về ĐƠN HÀNG, HÓA ĐƠN, KHÁCH HÀNG và SÁCH trong đơn hàng.
+
+QUY TẮC:
+1. Chỉ trả lời dựa trên DOCUMENTS được cung cấp bên dưới.
+2. Nếu không đủ dữ liệu, trả lời: 'Hiện tại tôi chưa có đủ dữ liệu trong hệ thống để trả lời chính xác câu hỏi này.'
+3. Trình bày ngắn gọn, rõ ràng, ưu tiên tiếng Việt.
+4. Khi liệt kê, dùng bullet points (-) hoặc đánh số.
+5. Luôn trích dẫn: OrderId, InvoiceId, InvoiceNumber, ISBN, CustomerId khi có trong documents.
+
+CÁC LOẠI DOCUMENTS:
+- ORDER: Thông tin đơn hàng (OrderId, khách hàng, trạng thái, ngày đặt, tổng giá trị, sản phẩm trong đơn).
+- ORDER_LINE: Chi tiết từng dòng trong đơn (ISBN, tên sách, số lượng, đơn giá, tổng).
+- INVOICE: Thông tin hóa đơn (InvoiceId, InvoiceNumber, OrderId, tổng tiền, thuế, trạng thái thanh toán, phương thức thanh toán, ngày thanh toán) - liên quan 1-1 với Order.
+- BOOK: Thông tin sách (ISBN, tiêu đề, tác giả, giá, tồn kho) - dùng để bổ sung context cho sách trong đơn.
+- CUSTOMER: Thông tin khách hàng (CustomerId, tên, email, SĐT, lịch sử mua) - dùng để bổ sung context cho khách trong đơn.
+
+CÁCH TRẢ LỜI:
+- Câu hỏi về 'đơn hàng gần nhất', 'đơn mới nhất': Tìm ORDER có updatedAt/PlacedAt gần nhất, liệt kê OrderId, khách hàng, sản phẩm, tổng giá trị.
+- Câu hỏi về 'hóa đơn', 'thanh toán', 'invoice': Tìm INVOICE, liệt kê InvoiceId, InvoiceNumber, OrderId, tổng tiền, thuế, trạng thái thanh toán, phương thức thanh toán.
+- Câu hỏi về 'hóa đơn của đơn Y': Tìm INVOICE có OrderId khớp, liệt kê thông tin hóa đơn.
+- Câu hỏi về 'khách hàng nào mua nhiều nhất': Dùng CUSTOMER documents, liệt kê CustomerId, tên, số đơn, tổng chi tiêu.
+- Câu hỏi về 'sách nào bán chạy': Dùng ORDER_LINE, nhóm theo ISBN, tính tổng số lượng, liệt kê top sách.
+- Câu hỏi về 'đơn hàng của khách X': Tìm ORDER có CustomerId/khách hàng khớp, liệt kê các đơn.
+- Câu hỏi về 'sách trong đơn Y': Tìm ORDER_LINE có OrderId khớp, liệt kê từng dòng với ISBN, tên sách, số lượng, giá.
+
+Khi câu hỏi về 'gần đây', 'mới nhất':
+- Dùng trường 'updatedAt' hoặc 'updatedAtFormatted' để xác định documents mới nhất.
+- Ưu tiên liệt kê documents có updatedAt gần nhất trước.
+- Nếu có 'Ngày đặt' hoặc 'PlacedAt' trong content, dùng thông tin đó.
+
+Documents đã được sắp xếp theo độ liên quan và thời gian. Documents ở rank cao hơn thường liên quan và mới hơn.";
 
         var aiResponseJson = await _geminiClient.CallGeminiAsync(systemPrompt, JsonSerializer.Serialize(payload, CamelCaseSerializerOptions), cancellationToken);
         if (string.IsNullOrWhiteSpace(aiResponseJson))
@@ -208,6 +374,18 @@ Nhiệm vụ:
 
         var answer = ExtractAiSearchAnswer(aiResponseJson, out var metadata);
         var docsForResponse = request.IncludeDebugDocuments ? orderedDocs : new List<AiSearchDocumentDto>();
+
+        // Thêm metadata về refTypes được sử dụng
+        metadata ??= new Dictionary<string, object?>();
+        metadata["requestedRefTypes"] = targetRefTypes;
+        metadata["availableRefTypes"] = availableRefTypes;
+        if (missingRefTypes.Count > 0)
+        {
+            metadata["missingRefTypes"] = missingRefTypes;
+            metadata["warning"] = $"Một số RefTypes được yêu cầu không có dữ liệu: [{string.Join(", ", missingRefTypes)}]";
+        }
+        metadata["documentsCount"] = orderedDocs.Count;
+        metadata["similarityThreshold"] = similarityThreshold;
 
         return new ApiResponse<AiSearchResponse>
         {
@@ -236,6 +414,15 @@ Nhiệm vụ:
                 Errors = new List<string> { "Invalid ref types" }
             };
         }
+
+        _logger.LogInformation(
+            "Starting AI Search Reindex - RefTypes: [{RefTypes}], Truncate: {Truncate}, HistoryDays: {HistoryDays}, MaxBooks: {MaxBooks}, MaxOrders: {MaxOrders}, MaxCustomers: {MaxCustomers}",
+            string.Join(", ", refTypes),
+            request.TruncateBeforeInsert,
+            request.HistoryDays,
+            request.MaxBooks,
+            request.MaxOrders,
+            request.MaxCustomers);
 
         var seeds = await BuildAiDocumentSeedsAsync(request, refTypes, cancellationToken);
         if (seeds.Count == 0)
@@ -440,6 +627,7 @@ Nhiệm vụ:
                 builder.AppendLine($"Giá trung bình: {FormatCurrency(book.AveragePrice)} VNĐ");
                 builder.AppendLine($"Tồn kho hiện tại: {book.Stock}");
                 builder.AppendLine($"Trạng thái: {(book.Status ? "Đang mở bán" : "Tạm ngưng")}");
+                builder.AppendLine($"Ngày cập nhật: {book.UpdatedAt:dd/MM/yyyy HH:mm} UTC");
 
                 if (ratingLookup.TryGetValue(book.Isbn, out var rating))
                 {
@@ -890,6 +1078,69 @@ Nhiệm vụ:
             }
         }
 
+        if (refTypes.Contains("invoice"))
+        {
+            var invoices = await _db.Invoices
+                .AsNoTracking()
+                .Where(i => i.CreatedAt >= historySince)
+                .Include(i => i.Order)
+                    .ThenInclude(o => o.Customer)
+                .Include(i => i.Order)
+                    .ThenInclude(o => o.OrderLines)
+                        .ThenInclude(ol => ol.Book)
+                .OrderByDescending(i => i.CreatedAt)
+                .Take(maxOrders)
+                .ToListAsync(cancellationToken);
+
+            foreach (var invoice in invoices)
+            {
+                var builder = new StringBuilder();
+                var order = invoice.Order;
+                var totalItems = order?.OrderLines?.Sum(line => line.Qty) ?? 0;
+
+                builder.AppendLine("Loại dữ liệu: INVOICE");
+                builder.AppendLine($"Invoice ID: {invoice.InvoiceId}");
+                builder.AppendLine($"Số hóa đơn: {invoice.InvoiceNumber}");
+                builder.AppendLine($"Order ID: {invoice.OrderId}");
+                builder.AppendLine($"Khách hàng: {order?.Customer?.FullName ?? order?.ReceiverName ?? "Không rõ"} (ID {order?.CustomerId ?? 0})");
+                builder.AppendLine($"Ngày tạo: {invoice.CreatedAt:dd/MM/yyyy HH:mm}");
+                builder.AppendLine($"Tổng tiền: {FormatCurrency(invoice.TotalAmount)} VNĐ");
+                builder.AppendLine($"Thuế: {FormatCurrency(invoice.TaxAmount)} VNĐ");
+                builder.AppendLine($"Tổng thanh toán: {FormatCurrency(invoice.TotalAmount + invoice.TaxAmount)} VNĐ");
+                builder.AppendLine($"Trạng thái thanh toán: {GetPaymentStatusLabel(invoice.PaymentStatus)}");
+                
+                if (!string.IsNullOrWhiteSpace(invoice.PaymentMethod))
+                {
+                    builder.AppendLine($"Phương thức thanh toán: {invoice.PaymentMethod}");
+                }
+                
+                if (invoice.PaidAt.HasValue)
+                {
+                    builder.AppendLine($"Ngày thanh toán: {invoice.PaidAt.Value:dd/MM/yyyy HH:mm}");
+                }
+                
+                if (!string.IsNullOrWhiteSpace(invoice.PaymentReference))
+                {
+                    builder.AppendLine($"Mã tham chiếu: {invoice.PaymentReference}");
+                }
+
+                builder.AppendLine($"Tổng sản phẩm: {totalItems}");
+                builder.AppendLine($"Trạng thái đơn: {GetOrderStatusLabel(order?.Status ?? OrderStatus.PendingConfirmation)}");
+                
+                if (order?.OrderLines != null && order.OrderLines.Any())
+                {
+                    builder.AppendLine("Chi tiết sản phẩm trong đơn:");
+                    foreach (var line in order.OrderLines.OrderByDescending(l => l.Qty))
+                    {
+                        var title = line.Book?.Title ?? line.Isbn;
+                        builder.AppendLine($"- {title} (ISBN {line.Isbn}): {line.Qty} x {FormatCurrency(line.UnitPrice)} VNĐ");
+                    }
+                }
+
+                seeds.Add(new AiDocumentSeed("invoice", invoice.InvoiceId.ToString(CultureInfo.InvariantCulture), builder.ToString()));
+            }
+        }
+
         return seeds;
     }
 
@@ -941,6 +1192,55 @@ Nhiệm vụ:
         return dot / (Math.Sqrt(normA) * Math.Sqrt(normB));
     }
 
+    /// <summary>
+    /// Tính adaptive threshold dựa trên distribution của similarities.
+    /// Sử dụng percentile và mean để xác định threshold hợp lý.
+    /// </summary>
+    private static double CalculateAdaptiveThreshold(List<double> similarities)
+    {
+        if (similarities.Count == 0)
+        {
+            return 0.3; // Default threshold
+        }
+
+        if (similarities.Count == 1)
+        {
+            return Math.Max(0.3, similarities[0] * 0.8); // 80% của similarity duy nhất
+        }
+
+        var sorted = similarities.OrderByDescending(s => s).ToList();
+        var count = sorted.Count;
+
+        // Tính các percentile an toàn
+        var p75Index = Math.Max(0, Math.Min(count - 1, (int)(count * 0.25))); // Top 25%
+        var p50Index = Math.Max(0, Math.Min(count - 1, (int)(count * 0.50))); // Median
+        var p75 = sorted[p75Index];
+        var p50 = sorted[p50Index];
+        var mean = sorted.Average();
+
+        // Strategy: 
+        // - Nếu có nhiều documents với similarity cao (>0.7), dùng threshold cao hơn
+        // - Nếu distribution đều, dùng median hoặc 75th percentile
+        // - Đảm bảo threshold tối thiểu là 0.3 và tối đa là 0.7
+
+        var highSimilarityCount = sorted.Count(s => s >= 0.7);
+        if (highSimilarityCount >= 5)
+        {
+            // Nhiều documents có similarity cao -> dùng threshold cao hơn
+            return Math.Clamp(p75, 0.4, 0.65);
+        }
+
+        if (highSimilarityCount >= 2)
+        {
+            // Một số documents có similarity cao -> dùng median
+            return Math.Clamp(p50, 0.35, 0.6);
+        }
+
+        // Ít documents có similarity cao -> dùng mean hoặc 25th percentile
+        var threshold = Math.Max(mean * 0.9, p75 * 0.85);
+        return Math.Clamp(threshold, 0.3, 0.55);
+    }
+
     private static List<string> ResolveRequestedRefTypes(IEnumerable<string>? requested)
     {
         if (requested == null)
@@ -957,6 +1257,143 @@ Nhiệm vụ:
             .ToList();
 
         return normalized.Count == 0 ? SupportedKnowledgeRefTypes.ToList() : normalized;
+    }
+
+    /// <summary>
+    /// Xác định RefTypes được ưu tiên cho query này (để boost trong ranking).
+    /// Chỉ hỗ trợ order, order_line, book, customer.
+    /// </summary>
+    private static List<string> GetPrioritizedRefTypesForQuery(string queryLower)
+    {
+        var prioritized = new List<string>();
+        
+        // Đơn hàng - ưu tiên cao nhất
+        if (queryLower.Contains("đơn hàng") || queryLower.Contains("order") || 
+            queryLower.Contains("đơn bán") || queryLower.Contains("đơn giao") || 
+            queryLower.Contains("đơn mới"))
+        {
+            prioritized.Add("order");
+            prioritized.Add("order_line");
+        }
+        
+        // Hóa đơn
+        if (queryLower.Contains("hóa đơn") || queryLower.Contains("invoice") || 
+            queryLower.Contains("thanh toán") || queryLower.Contains("payment"))
+        {
+            prioritized.Add("invoice");
+            prioritized.Add("order"); // Invoice liên quan đến order
+        }
+        
+        // Khách hàng
+        if (queryLower.Contains("khách hàng") || queryLower.Contains("customer") || 
+            queryLower.Contains("người mua") || queryLower.Contains("client"))
+        {
+            prioritized.Add("customer");
+            prioritized.Add("order"); // Order có thông tin khách hàng
+        }
+        
+        // Sách trong đơn
+        if (queryLower.Contains("sách") || queryLower.Contains("book") || 
+            queryLower.Contains("cuốn") || queryLower.Contains("đầu sách") ||
+            queryLower.Contains("bán chạy") || queryLower.Contains("bán được"))
+        {
+            prioritized.Add("order_line"); // Order line có thông tin sách
+            prioritized.Add("book");
+        }
+        
+        // Doanh số / Bán
+        if (queryLower.Contains("doanh số") || queryLower.Contains("bán") || 
+            queryLower.Contains("sales") || queryLower.Contains("doanh thu"))
+        {
+            prioritized.Add("order");
+            prioritized.Add("order_line");
+        }
+        
+        // Mặc định: ưu tiên order nếu không có keyword nào
+        if (prioritized.Count == 0)
+        {
+            prioritized.Add("order");
+            prioritized.Add("order_line");
+        }
+        
+        return prioritized.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// Tự động suggest RefTypes dựa trên keywords trong query.
+    /// Giúp người dùng không cần chỉ định RefTypes thủ công.
+    /// </summary>
+    private static List<string> SuggestRefTypesFromQuery(string query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return SupportedKnowledgeRefTypes.ToList();
+        }
+
+        var normalizedQuery = query.ToLowerInvariant();
+        var suggested = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Keywords mapping
+        // Chỉ hỗ trợ order, order_line, invoice, book, customer
+        var keywordMappings = new Dictionary<string, List<string>>
+        {
+            // Đơn hàng
+            { "order", new List<string> { "đơn hàng", "order", "đơn bán", "đơn", "đặt hàng", "đơn giao", "đơn mới" } },
+            { "order_line", new List<string> { "chi tiết đơn", "order line", "dòng đơn", "sản phẩm trong đơn", "sách trong đơn" } },
+            
+            // Hóa đơn
+            { "invoice", new List<string> { "hóa đơn", "invoice", "thanh toán", "payment", "phiếu thu" } },
+            
+            // Khách hàng
+            { "customer", new List<string> { "khách hàng", "customer", "người mua", "client", "người đặt" } },
+            
+            // Sách (để có context về sách trong đơn)
+            { "book", new List<string> { "sách", "book", "cuốn", "tác phẩm", "đầu sách", "tựa sách", "tiêu đề", "isbn" } }
+        };
+
+        // Tìm keywords trong query
+        foreach (var mapping in keywordMappings)
+        {
+            var refType = mapping.Key;
+            var keywords = mapping.Value;
+            
+            if (keywords.Any(keyword => normalizedQuery.Contains(keyword, StringComparison.OrdinalIgnoreCase)))
+            {
+                suggested.Add(refType);
+            }
+        }
+
+        // Nếu không tìm thấy keyword nào, trả về tất cả
+        if (suggested.Count == 0)
+        {
+            return SupportedKnowledgeRefTypes.ToList();
+        }
+
+        // Một số queries cần thêm refTypes liên quan
+        // Ví dụ: "đơn hàng của khách X" -> cần cả order và customer
+        if (normalizedQuery.Contains("đơn hàng", StringComparison.OrdinalIgnoreCase) ||
+            normalizedQuery.Contains("order", StringComparison.OrdinalIgnoreCase))
+        {
+            // Nếu hỏi về đơn hàng, luôn thêm order_line để có chi tiết
+            suggested.Add("order");
+            suggested.Add("order_line");
+            
+            // Nếu có từ khóa về khách hàng, thêm customer
+            if (normalizedQuery.Contains("khách", StringComparison.OrdinalIgnoreCase) ||
+                normalizedQuery.Contains("customer", StringComparison.OrdinalIgnoreCase))
+            {
+                suggested.Add("customer");
+            }
+        }
+
+        // Nếu hỏi về sách trong đơn, cần order_line và book
+        if (normalizedQuery.Contains("sách") || normalizedQuery.Contains("book"))
+        {
+            suggested.Add("order_line");
+            suggested.Add("book");
+        }
+
+        return suggested.ToList();
     }
 
     private string ExtractAiSearchAnswer(string rawJson, out Dictionary<string, object?>? metadata)
@@ -1051,6 +1488,16 @@ Nhiệm vụ:
             OrderStatus.Delivered => "Đã giao",
             OrderStatus.Cancelled => "Đã huỷ",
             _ => status.ToString()
+        };
+
+    private static string GetPaymentStatusLabel(string paymentStatus)
+        => paymentStatus?.ToUpperInvariant() switch
+        {
+            "PENDING" => "Chưa thanh toán",
+            "PAID" => "Đã thanh toán",
+            "FAILED" => "Thanh toán thất bại",
+            "REFUNDED" => "Đã hoàn tiền",
+            _ => paymentStatus ?? "Không rõ"
         };
 
     private static string FormatCurrency(decimal value)
