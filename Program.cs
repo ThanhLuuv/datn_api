@@ -31,8 +31,8 @@ var jwtSettings = builder.Configuration.GetSection("Jwt");
 var key = Encoding.UTF8.GetBytes(jwtSettings["Key"]!);
 
 // Google OAuth Configuration
-var googleClientId = builder.Configuration["Google:ClientId"];
-var googleClientSecret = builder.Configuration["Google:ClientSecret"];
+var googleClientId = "386583671447-7vdmpi3a96tqqod3c42bg6s34v0c49gi.apps.googleusercontent.com";
+var googleClientSecret = "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";
 
 builder.Services.AddAuthentication(options =>
 {
@@ -57,13 +57,10 @@ builder.Services.AddAuthentication(options =>
 })
 .AddGoogle(options =>
 {
-    if (!string.IsNullOrEmpty(googleClientId) && !string.IsNullOrEmpty(googleClientSecret))
-    {
-        options.ClientId = googleClientId;
-        options.ClientSecret = googleClientSecret;
-        options.CallbackPath = "/api/auth/google/callback";
-        options.SaveTokens = true;
-    }
+    options.ClientId = googleClientId;
+    options.ClientSecret = googleClientSecret;
+    options.CallbackPath = "/api/auth/google/callback";
+    options.SaveTokens = true;
 });
 
 // Authorization with policies on 'permissions' claim (space-separated)
