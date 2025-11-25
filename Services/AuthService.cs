@@ -230,4 +230,102 @@ public class AuthService : IAuthService
             };
         }
     }
+
+    public async Task<ApiResponse<AuthResponseDto>> GoogleLoginAsync(string email, string googleId, string? firstName, string? lastName, string? pictureUrl)
+    {
+        try
+        {
+            // Find existing account by email
+            var account = await _context.Accounts
+                .Include(a => a.Role)
+                .FirstOrDefaultAsync(a => a.Email == email);
+
+            // If account doesn't exist, create new one
+            if (account == null)
+            {
+                // Get default CUSTOMER role (RoleId = 1)
+                var customerRole = await _context.Roles
+                    .FirstOrDefaultAsync(r => r.Name == "CUSTOMER");
+
+                if (customerRole == null)
+                {
+                    return new ApiResponse<AuthResponseDto>
+                    {
+                        Success = false,
+                        Message = "Không tìm thấy role CUSTOMER",
+                        Errors = new List<string> { "Hệ thống chưa được cấu hình đúng" }
+                    };
+                }
+
+                // Create new account with Google authentication
+                // Use a placeholder password hash since the field is required
+                // Google accounts won't use password authentication
+                var passwordHash = BCrypt.Net.BCrypt.HashPassword($"GOOGLE_{googleId}_{DateTime.UtcNow.Ticks}");
+
+                account = new Account
+                {
+                    Email = email,
+                    PasswordHash = passwordHash,
+                    RoleId = customerRole.RoleId,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                _context.Accounts.Add(account);
+                await _context.SaveChangesAsync();
+
+                // Auto-create Customer profile
+                var customer = new Customer
+                {
+                    AccountId = account.AccountId,
+                    FirstName = firstName ?? email.Split('@')[0],
+                    LastName = lastName ?? string.Empty,
+                    Gender = Gender.Other,
+                    Email = email,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                _context.Customers.Add(customer);
+                await _context.SaveChangesAsync();
+
+                // Reload account with role
+                await _context.Entry(account)
+                    .Reference(a => a.Role)
+                    .LoadAsync();
+            }
+
+            // Load permissions for role
+            var permissions = await _context.RolePermissions
+                .Where(rp => rp.RoleId == account.RoleId)
+                .Select(rp => rp.Permission.Code)
+                .ToListAsync();
+
+            // Generate JWT token with permissions
+            var token = _jwtService.GenerateToken(account, permissions);
+            var expireDays = 7; // Default from configuration
+
+            return new ApiResponse<AuthResponseDto>
+            {
+                Success = true,
+                Message = "Đăng nhập Google thành công",
+                Data = new AuthResponseDto
+                {
+                    Token = token,
+                    Email = account.Email,
+                    Role = account.Role.Name,
+                    Expires = DateTime.UtcNow.AddDays(expireDays)
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<AuthResponseDto>
+            {
+                Success = false,
+                Message = "Đã xảy ra lỗi khi đăng nhập Google",
+                Errors = new List<string> { ex.Message }
+            };
+        }
+    }
 }

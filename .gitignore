@@ -381,6 +381,11 @@ appsettings.*.json
 !appsettings.example.json
 *.user
 
+# Ensure appsettings files are ignored (explicit)
+/appsettings.json
+/appsettings.Development.json
+/appsettings.Production.json
+
 # Environment variables and secrets
 .env
 .env.local
