@@ -35,9 +35,9 @@ public class AuthController : ControllerBase
         // Production: callback về frontend domain (có reverse proxy forward đến API)
         if (!_environment.IsDevelopment())
         {
-            return "https://bookstore.thanhlaptrinh.online/api/auth/google/callback";
+            return "https://api.thanhlaptrinh.online/api/auth/google/callback";
         }
-        // Local: callback về backend port 5256 (vì frontend port 3000 không có proxy)
+        // Local: callback về backend port 5256
         return "http://localhost:5256/api/auth/google/callback";
     }
 
