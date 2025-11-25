@@ -2,6 +2,7 @@ using BookStore.Api.Data;
 using BookStore.Api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.Google;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -38,6 +39,8 @@ builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
     options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    // Use a small cookie scheme for external provider sign-in
+    options.DefaultSignInScheme = "External";
 })
 .AddJwtBearer(options =>
 {
@@ -55,12 +58,24 @@ builder.Services.AddAuthentication(options =>
         RoleClaimType = System.Security.Claims.ClaimTypes.Role
     };
 })
-.AddGoogle(options =>
+.AddCookie("External", options =>
 {
-    options.ClientId = googleClientId;
-    options.ClientSecret = googleClientSecret;
-    options.CallbackPath = "/api/auth/google/callback";
-    options.SaveTokens = true;
+    // Cookie settings for the external (OAuth) correlation cookie.
+    options.Cookie.Name = ".AspNetCore.External";
+    options.Cookie.SameSite = SameSiteMode.None;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+    options.Cookie.HttpOnly = true;
+    options.ExpireTimeSpan = TimeSpan.FromMinutes(5);
+});
+
+// Configure cookie policy to avoid the framework from forcing SameSite behavior that
+// can break OAuth redirects in some browsers. This makes the MinimumSameSitePolicy
+// unspecified so our cookie settings are respected.
+builder.Services.Configure<CookiePolicyOptions>(options =>
+{
+    options.MinimumSameSitePolicy = SameSiteMode.Unspecified;
+    options.HttpOnly = Microsoft.AspNetCore.CookiePolicy.HttpOnlyPolicy.Always;
+    options.Secure = CookieSecurePolicy.SameAsRequest;
 });
 
 // Authorization with policies on 'permissions' claim (space-separated)
@@ -166,6 +181,8 @@ builder.Services.AddCors(options =>
 // Register services
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+// In-memory cache used for storing OAuth state during the manual Google flow
+builder.Services.AddMemoryCache();
 builder.Services.AddScoped<ICategoryService, CategoryService>();
 builder.Services.AddScoped<IBookService, BookService>();
 builder.Services.AddScoped<IPublisherService, PublisherService>();

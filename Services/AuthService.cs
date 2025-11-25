@@ -23,6 +23,7 @@ public class AuthService : IAuthService
         {
             // Check if email already exists
             var existingUser = await _context.Accounts
+                .Include(a => a.Customer)
                 .FirstOrDefaultAsync(a => a.Email == registerDto.Email);
 
             if (existingUser != null)
@@ -79,6 +80,9 @@ public class AuthService : IAuthService
             await _context.Entry(account)
                 .Reference(a => a.Role)
                 .LoadAsync();
+            await _context.Entry(account)
+                .Reference(a => a.Customer)
+                .LoadAsync();
 
             // Load permissions for role
             var permissions = await _context.RolePermissions
@@ -99,7 +103,9 @@ public class AuthService : IAuthService
                     Token = token,
                     Email = account.Email,
                     Role = account.Role.Name,
-                    Expires = DateTime.UtcNow.AddDays(expireDays)
+                    Expires = DateTime.UtcNow.AddDays(expireDays),
+                    FullName = $"{customer.FirstName} {customer.LastName}".Trim(),
+                    AvatarUrl = null
                 }
             };
         }
@@ -121,6 +127,7 @@ public class AuthService : IAuthService
             // Find user by email
             var account = await _context.Accounts
                 .Include(a => a.Role)
+                .Include(a => a.Customer)
                 .FirstOrDefaultAsync(a => a.Email == loginDto.Email);
 
             if (account == null)
@@ -154,6 +161,10 @@ public class AuthService : IAuthService
             var token = _jwtService.GenerateToken(account, permissions);
             var expireDays = 7; // Default from configuration
 
+            var fullName = account.Customer != null
+                ? $"{account.Customer.FirstName} {account.Customer.LastName}".Trim()
+                : account.Email;
+
             return new ApiResponse<AuthResponseDto>
             {
                 Success = true,
@@ -163,7 +174,9 @@ public class AuthService : IAuthService
                     Token = token,
                     Email = account.Email,
                     Role = account.Role.Name,
-                    Expires = DateTime.UtcNow.AddDays(expireDays)
+                    Expires = DateTime.UtcNow.AddDays(expireDays),
+                    FullName = fullName,
+                    AvatarUrl = null
                 }
             };
         }
@@ -185,6 +198,7 @@ public class AuthService : IAuthService
             // Find user by email
             var account = await _context.Accounts
                 .Include(a => a.Role)
+                .Include(a => a.Customer)
                 .FirstOrDefaultAsync(a => a.Email == email);
 
             if (account == null)
@@ -207,6 +221,10 @@ public class AuthService : IAuthService
             var token = _jwtService.GenerateToken(account, permissions);
             var expireDays = 7; // Default from configuration
 
+            var fullName = account.Customer != null
+                ? $"{account.Customer.FirstName} {account.Customer.LastName}".Trim()
+                : account.Email;
+
             return new ApiResponse<AuthResponseDto>
             {
                 Success = true,
@@ -216,7 +234,9 @@ public class AuthService : IAuthService
                     Token = token,
                     Email = account.Email,
                     Role = account.Role.Name,
-                    Expires = DateTime.UtcNow.AddDays(expireDays)
+                    Expires = DateTime.UtcNow.AddDays(expireDays),
+                    FullName = fullName,
+                    AvatarUrl = null
                 }
             };
         }
@@ -238,6 +258,7 @@ public class AuthService : IAuthService
             // Find existing account by email
             var account = await _context.Accounts
                 .Include(a => a.Role)
+                .Include(a => a.Customer)
                 .FirstOrDefaultAsync(a => a.Email == email);
 
             // If account doesn't exist, create new one
@@ -293,6 +314,39 @@ public class AuthService : IAuthService
                 await _context.Entry(account)
                     .Reference(a => a.Role)
                     .LoadAsync();
+                await _context.Entry(account)
+                    .Reference(a => a.Customer)
+                    .LoadAsync();
+            }
+
+            if (account.Customer == null)
+            {
+                account.Customer = await _context.Customers
+                    .FirstOrDefaultAsync(c => c.AccountId == account.AccountId);
+            }
+
+            if (account.Customer != null)
+            {
+                var updated = false;
+
+                if (!string.IsNullOrWhiteSpace(firstName) && account.Customer.FirstName != firstName)
+                {
+                    account.Customer.FirstName = firstName!;
+                    updated = true;
+                }
+
+                if (!string.IsNullOrWhiteSpace(lastName) && account.Customer.LastName != lastName)
+                {
+                    account.Customer.LastName = lastName!;
+                    updated = true;
+                }
+
+                if (updated)
+                {
+                    account.Customer.UpdatedAt = DateTime.UtcNow;
+                    _context.Customers.Update(account.Customer);
+                    await _context.SaveChangesAsync();
+                }
             }
 
             // Load permissions for role
@@ -314,7 +368,11 @@ public class AuthService : IAuthService
                     Token = token,
                     Email = account.Email,
                     Role = account.Role.Name,
-                    Expires = DateTime.UtcNow.AddDays(expireDays)
+                    Expires = DateTime.UtcNow.AddDays(expireDays),
+                    FullName = account.Customer != null
+                        ? $"{account.Customer.FirstName} {account.Customer.LastName}".Trim()
+                        : account.Email,
+                    AvatarUrl = pictureUrl
                 }
             };
         }
