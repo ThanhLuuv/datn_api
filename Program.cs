@@ -31,10 +31,6 @@ builder.Services.AddDbContext<BookStoreDbContext>(options =>
 var jwtSettings = builder.Configuration.GetSection("Jwt");
 var key = Encoding.UTF8.GetBytes(jwtSettings["Key"]!);
 
-// Google OAuth Configuration
-var googleClientId = "386583671447-7vdmpi3a96tqqod3c42bg6s34v0c49gi.apps.googleusercontent.com";
-var googleClientSecret = "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";
-
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;

@@ -26,8 +26,8 @@ public class AuthController : ControllerBase
     private static readonly string[] AllowedRedirectHosts = new[] { "bookstore.thanhlaptrinh.online", "datn.thanhlaptrinh.online", "localhost", "127.0.0.1" };
 
     // Google OAuth credentials - hardcoded as requested (not in config files)
-    private const string GoogleClientId = "386583671447-7vdmpi3a96tqqod3c42bg6s34v0c49gi.apps.googleusercontent.com";
-    private const string GoogleClientSecret = "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";
+    private const string GoogleClientId = "386583671447-j5196qdrpudv7kt4542urodse5hqeql0.apps.googleusercontent.com";
+    private const string GoogleClientSecret = "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";
     
     // Get callback URL based on environment
     private string GetGoogleCallbackUrl()
