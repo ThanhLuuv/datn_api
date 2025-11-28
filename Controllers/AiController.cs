@@ -219,6 +219,40 @@ public class AiController : ControllerBase
 
         return BadRequest(result);
     }
+
+    /// <summary>
+    /// Chat với AI Assistant sử dụng Hybrid Architecture (Function Calling + RAG).
+    /// AI tự động quyết định dùng RAG (cho sách) hoặc Function Calling (cho đơn hàng, hóa đơn).
+    /// </summary>
+    [HttpPost("chat")]
+    [Authorize(Roles = "ADMIN")]
+    public async Task<ActionResult<ApiResponse<AiSearchResponse>>> Chat(
+        [FromBody] ChatRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!ModelState.IsValid || string.IsNullOrWhiteSpace(request.Query))
+        {
+            return BadRequest(new ApiResponse<AiSearchResponse>
+            {
+                Success = false,
+                Message = "Query không được để trống",
+                Errors = new List<string> { "Query is required" }
+            });
+        }
+
+        var result = await _aiSearchService.ChatWithAssistantAsync(request.Query, cancellationToken);
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+
+        return BadRequest(result);
+    }
+}
+
+public class ChatRequest
+{
+    public string Query { get; set; } = string.Empty;
 }
 
 

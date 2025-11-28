@@ -5,6 +5,12 @@ using Microsoft.Extensions.Logging;
 
 namespace BookStore.Api.Services;
 
+// ============================================================================
+// Function Calling Support Classes
+// ============================================================================
+
+public record FunctionCall(string Name, Dictionary<string, object> Args);
+
 public class GeminiClient : IGeminiClient
 {
     private readonly HttpClient _httpClient;
@@ -38,7 +44,6 @@ public class GeminiClient : IGeminiClient
         _logger.LogDebug("Calling Gemini API: Model={Model}, BaseUrl={BaseUrl}, ApiKeyLength={ApiKeyLength}", 
             model, baseUrl, apiKey?.Length ?? 0);
         
-        var url = $"{baseUrl}/v1beta/models/{model}:generateContent?key={apiKey}";
         var body = new
         {
             systemInstruction = new
@@ -75,7 +80,7 @@ public class GeminiClient : IGeminiClient
         return ExtractFirstTextFromResponse(docRef);
     }
 
-    public async Task<JsonDocument?> CallGeminiCustomAsync(object payload, string? modelOverride, string? baseUrlOverride, string? apiKeyOverride, CancellationToken cancellationToken)
+    public async Task<JsonDocument?> CallGeminiCustomAsync(object payload, string? modelOverride, string? baseUrlOverride, string? apiKeyOverride, CancellationToken cancellationToken, string? urlOverride = null)
     {
         if (!TryPrepareGeminiRequest(out var defaultModel, out var defaultBaseUrl, out var defaultApiKey))
         {
@@ -87,13 +92,18 @@ public class GeminiClient : IGeminiClient
         var apiKey = string.IsNullOrWhiteSpace(apiKeyOverride) ? defaultApiKey : apiKeyOverride!;
 
         // Log API key đang dùng cho chat
-        _logger.LogInformation("Calling Gemini Chat API - Model: {Model}, Key: {ApiKeyPrefix}...{ApiKeySuffix} (Full: {FullKey})", 
+        _logger.LogInformation("Calling Gemini API - Model: {Model}, Key: {ApiKeyPrefix}...{ApiKeySuffix} (Full: {FullKey})", 
             model,
             apiKey?.Length > 10 ? apiKey.Substring(0, 10) : "N/A",
             apiKey?.Length > 10 ? apiKey.Substring(apiKey.Length - 10) : "N/A",
             apiKey ?? "NULL");
 
-        var url = $"{baseUrl}/v1beta/models/{model}:generateContent?key={apiKey}";
+        var url = urlOverride;
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            url = $"{baseUrl}/v1beta/models/{model}:generateContent?key={apiKey}";
+        }
+
         using var requestMessage = new HttpRequestMessage(HttpMethod.Post, url);
         requestMessage.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
@@ -368,5 +378,542 @@ public class GeminiClient : IGeminiClient
             ?? "https://generativelanguage.googleapis.com").TrimEnd('/');
         
         return true;
+    }
+    public async Task<string?> UploadFileAsync(Stream fileStream, string displayName, string mimeType, CancellationToken cancellationToken)
+    {
+        if (!TryPrepareGeminiRequest(out _, out var baseUrl, out var apiKey))
+        {
+            return null;
+        }
+
+        // Upload API uses a different base URL usually, but for Gemini it's often the same or 'https://generativelanguage.googleapis.com'
+        // The upload endpoint is /upload/v1beta/files
+        var uploadUrl = $"https://generativelanguage.googleapis.com/upload/v1beta/files?key={apiKey}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, uploadUrl);
+        request.Headers.Add("X-Goog-Upload-Protocol", "raw");
+        request.Headers.Add("X-Goog-Upload-Header-Content-Length", fileStream.Length.ToString());
+        request.Headers.Add("X-Goog-Upload-Header-Content-Type", mimeType);
+        
+        // Wrap stream in StreamContent
+        var content = new StreamContent(fileStream);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mimeType);
+        request.Content = content;
+
+        // Add display name in metadata if possible, but raw upload doesn't support metadata easily in one go.
+        // For simplicity, we just upload. To set display name, we might need multipart.
+        // Let's stick to raw for now.
+
+        await GeminiApiSemaphore.WaitAsync(cancellationToken);
+        try
+        {
+            var response = await _httpClient.SendAsync(request, cancellationToken);
+            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError("Failed to upload file. Status: {Status}, Body: {Body}", response.StatusCode, responseContent);
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(responseContent);
+            if (doc.RootElement.TryGetProperty("file", out var fileElement) && 
+                fileElement.TryGetProperty("name", out var nameElement)) // 'name' is the URI (files/...)
+            {
+                return nameElement.GetString();
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error uploading file to Gemini");
+            return null;
+        }
+        finally
+        {
+            GeminiApiSemaphore.Release();
+        }
+    }
+
+    public async Task<string?> CreateFileSearchStoreAsync(string displayName, CancellationToken cancellationToken)
+    {
+        if (!TryPrepareGeminiRequest(out _, out var baseUrl, out var apiKey))
+        {
+            return null;
+        }
+
+        var url = $"{baseUrl}/v1beta/fileSearchStores?key={apiKey}";
+        var body = new { displayName = displayName };
+
+        var doc = await CallGeminiCustomAsync(body, null, baseUrl, apiKey, cancellationToken, url); // Pass url explicitly
+        if (doc == null) return null;
+
+        if (doc.RootElement.TryGetProperty("name", out var nameElement))
+        {
+                if (attempt < maxRetries - 1 && response.StatusCode >= System.Net.HttpStatusCode.InternalServerError)
+                {
+                    // Retry on server errors
+                    continue;
+                }
+                
+                return Array.Empty<float>();
+            }
+            catch (HttpRequestException httpEx) when (attempt < maxRetries - 1)
+            {
+                _logger.LogWarning(httpEx, "HTTP error calling Gemini embedding API, will retry. Attempt {Attempt}/{MaxRetries}", attempt + 1, maxRetries);
+                GeminiApiSemaphore.Release();
+                continue;
+            }
+            catch (TaskCanceledException timeoutEx) when (attempt < maxRetries - 1)
+            {
+                _logger.LogWarning(timeoutEx, "Timeout calling Gemini embedding API, will retry. Attempt {Attempt}/{MaxRetries}", attempt + 1, maxRetries);
+                GeminiApiSemaphore.Release();
+                continue;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                _logger.LogError(ex, "Lỗi khi gọi Gemini embedding API");
+                GeminiApiSemaphore.Release();
+                return Array.Empty<float>();
+            }
+            finally
+            {
+                // Release semaphore sau mỗi attempt (nếu chưa release trong catch)
+                if (GeminiApiSemaphore.CurrentCount < 3)
+                {
+                    try { GeminiApiSemaphore.Release(); } catch { }
+                }
+            }
+        }
+
+        return Array.Empty<float>();
+    }
+
+    public string? ExtractFirstTextFromResponse(JsonDocument doc)
+    {
+        if (!doc.RootElement.TryGetProperty("candidates", out var candidates) || candidates.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        foreach (var candidate in candidates.EnumerateArray())
+        {
+            if (!candidate.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (!content.TryGetProperty("parts", out var parts) || parts.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            foreach (var part in parts.EnumerateArray())
+            {
+                if (part.TryGetProperty("text", out var textProp) && textProp.ValueKind == JsonValueKind.String)
+                {
+                    var text = textProp.GetString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        return text;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private bool TryPrepareGeminiRequest(out string model, out string baseUrl, out string apiKey)
+    {
+        var envKey = Environment.GetEnvironmentVariable("Gemini__ApiKey");
+        var configKey = _configuration["Gemini:ApiKey"];
+        
+        apiKey = envKey ?? configKey ?? string.Empty;
+        
+        // Log để debug API key đang được dùng
+        _logger.LogInformation("Loading Gemini API key - Env var: {HasEnv}, Config: {HasConfig}, Key: {ApiKeyPrefix}...{ApiKeySuffix} (Length: {Length})", 
+            !string.IsNullOrEmpty(envKey), 
+            !string.IsNullOrEmpty(configKey),
+            apiKey?.Length > 10 ? apiKey.Substring(0, 10) : "N/A",
+            apiKey?.Length > 10 ? apiKey.Substring(apiKey.Length - 10) : "N/A",
+            apiKey?.Length ?? 0);
+        
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            var hasEnv = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("Gemini__ApiKey"));
+            var hasConfig = !string.IsNullOrEmpty(_configuration["Gemini:ApiKey"]);
+            _logger.LogWarning("Gemini:ApiKey is not configured. Env var: {HasEnv}, Config: {HasConfig}. Please set Gemini__ApiKey environment variable.", 
+                hasEnv, hasConfig);
+            model = DefaultModel;
+            baseUrl = "https://generativelanguage.googleapis.com";
+            return false;
+        }
+
+        model = Environment.GetEnvironmentVariable("Gemini__Model")
+            ?? _configuration["Gemini:Model"] 
+            ?? DefaultModel;
+        
+        baseUrl = (Environment.GetEnvironmentVariable("Gemini__BaseUrl")
+            ?? _configuration["Gemini:BaseUrl"] 
+            ?? "https://generativelanguage.googleapis.com").TrimEnd('/');
+        
+        return true;
+    }
+    public async Task<string?> UploadFileAsync(Stream fileStream, string displayName, string mimeType, CancellationToken cancellationToken)
+    {
+        if (!TryPrepareGeminiRequest(out _, out var baseUrl, out var apiKey))
+        {
+            return null;
+        }
+
+        // Upload API uses a different base URL usually, but for Gemini it's often the same or 'https://generativelanguage.googleapis.com'
+        // The upload endpoint is /upload/v1beta/files
+        var uploadUrl = $"https://generativelanguage.googleapis.com/upload/v1beta/files?key={apiKey}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, uploadUrl);
+        request.Headers.Add("X-Goog-Upload-Protocol", "raw");
+        request.Headers.Add("X-Goog-Upload-Header-Content-Length", fileStream.Length.ToString());
+        request.Headers.Add("X-Goog-Upload-Header-Content-Type", mimeType);
+        
+        // Wrap stream in StreamContent
+        var content = new StreamContent(fileStream);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mimeType);
+        request.Content = content;
+
+        // Add display name in metadata if possible, but raw upload doesn't support metadata easily in one go.
+        // For simplicity, we just upload. To set display name, we might need multipart.
+        // Let's stick to raw for now.
+
+        await GeminiApiSemaphore.WaitAsync(cancellationToken);
+        try
+        {
+            var response = await _httpClient.SendAsync(request, cancellationToken);
+            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError("Failed to upload file. Status: {Status}, Body: {Body}", response.StatusCode, responseContent);
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(responseContent);
+            if (doc.RootElement.TryGetProperty("file", out var fileElement) && 
+                fileElement.TryGetProperty("name", out var nameElement)) // 'name' is the URI (files/...)
+            {
+                return nameElement.GetString();
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error uploading file to Gemini");
+            return null;
+        }
+        finally
+        {
+            GeminiApiSemaphore.Release();
+        }
+    }
+
+    public async Task<string?> CreateFileSearchStoreAsync(string displayName, CancellationToken cancellationToken)
+    {
+        if (!TryPrepareGeminiRequest(out _, out var baseUrl, out var apiKey))
+        {
+            return null;
+        }
+
+        var url = $"{baseUrl}/v1beta/fileSearchStores?key={apiKey}";
+        var body = new { displayName = displayName };
+
+        var doc = await CallGeminiCustomAsync(body, null, baseUrl, apiKey, cancellationToken, url); // Pass url explicitly
+        if (doc == null) return null;
+
+        if (doc.RootElement.TryGetProperty("name", out var nameElement))
+        {
+            return nameElement.GetString();
+        }
+        return null;
+    }
+
+    public async Task AddFileToStoreAsync(string storeName, string fileUri, CancellationToken cancellationToken)
+    {
+        if (!TryPrepareGeminiRequest(out _, out var baseUrl, out var apiKey))
+        {
+            return;
+        }
+
+        // Endpoint: POST /v1beta/{storeName}/files
+        var url = $"{baseUrl}/v1beta/{storeName}/files?key={apiKey}";
+        var body = new { resourceName = fileUri };
+
+        // We can use CallGeminiCustomAsync but we don't expect a return value really, just success.
+        // But CallGeminiCustomAsync expects a response body.
+        
+        // Let's manually call to handle void return or check errors
+        using var requestMessage = new HttpRequestMessage(HttpMethod.Post, url);
+        requestMessage.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+
+        await GeminiApiSemaphore.WaitAsync(cancellationToken);
+        try
+        {
+            var response = await _httpClient.SendAsync(requestMessage, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                var content = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogError("Failed to add file to store. Status: {Status}, Body: {Body}", response.StatusCode, content);
+                throw new Exception($"Failed to add file to store: {content}");
+            }
+        }
+        finally
+        {
+            GeminiApiSemaphore.Release();
+        }
+    }
+
+    public async Task<string?> UploadFileToStoreAsync(Stream fileStream, string storeName, string mimeType, CancellationToken cancellationToken)
+    {
+        if (!TryPrepareGeminiRequest(out _, out var baseUrl, out var apiKey))
+        {
+            return null;
+        }
+
+        // Endpoint: POST https://generativelanguage.googleapis.com/upload/v1beta/{storeName}:upload?key={apiKey}
+        // Note: storeName includes "fileSearchStores/..."
+        var uploadUrl = $"https://generativelanguage.googleapis.com/upload/v1beta/{storeName}:upload?key={apiKey}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, uploadUrl);
+        request.Headers.Add("X-Goog-Upload-Protocol", "raw");
+        request.Headers.Add("X-Goog-Upload-Header-Content-Length", fileStream.Length.ToString());
+        request.Headers.Add("X-Goog-Upload-Header-Content-Type", mimeType);
+        
+        var content = new StreamContent(fileStream);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mimeType);
+        request.Content = content;
+
+        await GeminiApiSemaphore.WaitAsync(cancellationToken);
+        try
+        {
+            var response = await _httpClient.SendAsync(request, cancellationToken);
+            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError("Failed to upload file to store. Status: {Status}, Body: {Body}", response.StatusCode, responseContent);
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(responseContent);
+            if (doc.RootElement.TryGetProperty("file", out var fileElement) && 
+                fileElement.TryGetProperty("name", out var nameElement))
+            {
+                return nameElement.GetString();
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error uploading file to store Gemini");
+            return null;
+        }
+        finally
+        {
+            GeminiApiSemaphore.Release();
+        }
+    }
+
+    public async Task<string?> GenerateContentWithToolAsync(string systemPrompt, string userPayload, object toolConfig, CancellationToken cancellationToken)
+    {
+        if (!TryPrepareGeminiRequest(out var model, out var baseUrl, out var apiKey))
+        {
+            return null;
+        }
+
+        var url = $"{baseUrl}/v1beta/models/{model}:generateContent?key={apiKey}";
+        var body = new
+        {
+            systemInstruction = new
+            {
+                parts = new[] { new { text = systemPrompt } }
+            },
+            contents = new[]
+            {
+                new
+                {
+                    role = "user",
+                    parts = new[] { new { text = userPayload } }
+                }
+            },
+            tools = new[] { toolConfig },
+            generationConfig = new { temperature = 0.5 }
+        };
+
+        var doc = await CallGeminiCustomAsync(body, model, baseUrl, apiKey, cancellationToken);
+        if (doc == null) return null;
+
+        using var docRef = doc;
+        return ExtractFirstTextFromResponse(docRef);
+    }
+
+    // ============================================================================
+    // Function Calling Methods
+    // ============================================================================
+
+    public async Task<JsonDocument?> CallGeminiWithToolsAsync(
+        string systemPrompt, 
+        string userPayload, 
+        object toolConfig, 
+        CancellationToken cancellationToken)
+    {
+        if (!TryPrepareGeminiRequest(out var model, out var baseUrl, out var apiKey))
+        {
+            return null;
+        }
+
+        var body = new
+        {
+            systemInstruction = new
+            {
+                parts = new[] { new { text = systemPrompt } }
+            },
+            contents = new[]
+            {
+                new
+                {
+                    role = "user",
+                    parts = new[] { new { text = userPayload } }
+                }
+            },
+            tools = new[] { toolConfig },
+            generationConfig = new { temperature = 0.3 }
+        };
+
+        return await CallGeminiCustomAsync(body, model, baseUrl, apiKey, cancellationToken);
+    }
+
+    public async Task<string?> SendFunctionResultAsync(
+        string systemPrompt,
+        string userQuery,
+        string functionName,
+        Dictionary<string, object> originalArgs,
+        string functionResult,
+        CancellationToken cancellationToken)
+    {
+        if (!TryPrepareGeminiRequest(out var model, out var baseUrl, out var apiKey))
+        {
+            return null;
+        }
+
+        var body = new
+        {
+            systemInstruction = new
+            {
+                parts = new[] { new { text = systemPrompt } }
+            },
+            contents = new[]
+            {
+                new
+                {
+                    role = "user",
+                    parts = new[] { new { text = userQuery } }
+                },
+                new
+                {
+                    role = "model",
+                    parts = new[]
+                    {
+                        new
+                        {
+                            functionCall = new
+                            {
+                                name = functionName,
+                                args = originalArgs // FIXED: Truyền args gốc thay vì {}
+                            }
+                        }
+                    }
+                },
+                new
+                {
+                    role = "function",
+                    parts = new[]
+                    {
+                        new
+                        {
+                            functionResponse = new
+                            {
+                                name = functionName,
+                                response = new
+                                {
+                                    content = functionResult
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            generationConfig = new { temperature = 0.3 }
+        };
+
+        var doc = await CallGeminiCustomAsync(body, model, baseUrl, apiKey, cancellationToken);
+        if (doc == null) return null;
+
+        using var docRef = doc;
+        return ExtractFirstTextFromResponse(docRef);
+    }
+
+    public FunctionCall? TryParseFunctionCall(JsonDocument response)
+    {
+        try
+        {
+            if (!response.RootElement.TryGetProperty("candidates", out var candidates) ||
+                candidates.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            foreach (var candidate in candidates.EnumerateArray())
+            {
+                if (!candidate.TryGetProperty("content", out var content) ||
+                    !content.TryGetProperty("parts", out var parts))
+                {
+                    continue;
+                }
+
+                foreach (var part in parts.EnumerateArray())
+                {
+                    if (part.TryGetProperty("functionCall", out var functionCall))
+                    {
+                        var name = functionCall.TryGetProperty("name", out var nameProp) 
+                            ? nameProp.GetString() ?? string.Empty 
+                            : string.Empty;
+
+                        var args = new Dictionary<string, object>();
+                        if (functionCall.TryGetProperty("args", out var argsProp))
+                        {
+                            foreach (var arg in argsProp.EnumerateObject())
+                            {
+                                args[arg.Name] = arg.Value.ValueKind switch
+                                {
+                                    JsonValueKind.String => arg.Value.GetString() ?? string.Empty,
+                                    JsonValueKind.Number => arg.Value.GetDouble(),
+                                    JsonValueKind.True => true,
+                                    JsonValueKind.False => false,
+                                    _ => arg.Value.GetRawText()
+                                };
+                            }
+                        }
+
+                        return new FunctionCall(name, args);
+                    }
+                }
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error parsing function call from Gemini response");
+            return null;
+        }
     }
 }
