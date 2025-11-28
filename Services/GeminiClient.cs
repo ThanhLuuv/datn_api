@@ -199,11 +199,6 @@ public class GeminiClient : IGeminiClient
             }
         };
 
-        using var requestMessage = new HttpRequestMessage(HttpMethod.Post, url)
-        {
-            Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
-        };
-
         // Retry logic với exponential backoff
         const int maxRetries = 3;
         for (int attempt = 0; attempt < maxRetries; attempt++)
@@ -219,6 +214,12 @@ public class GeminiClient : IGeminiClient
                     _logger.LogDebug("Retrying Gemini embedding API call, attempt {Attempt}/{MaxRetries}", attempt + 1, maxRetries);
                 }
 
+                // Create new request for each attempt
+                using var requestMessage = new HttpRequestMessage(HttpMethod.Post, url)
+                {
+                    Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+                };
+
                 var response = await _httpClient.SendAsync(requestMessage, cancellationToken);
                 var content = await response.Content.ReadAsStringAsync(cancellationToken);
                 
@@ -230,6 +231,7 @@ public class GeminiClient : IGeminiClient
                         !embeddingElement.TryGetProperty("values", out var valuesElement) ||
                         valuesElement.ValueKind != JsonValueKind.Array)
                     {
+                        GeminiApiSemaphore.Release();
                         return Array.Empty<float>();
                     }
 
@@ -242,6 +244,7 @@ public class GeminiClient : IGeminiClient
                         }
                     }
 
+                    GeminiApiSemaphore.Release();
                     return vector.ToArray();
                 }
 
@@ -251,6 +254,7 @@ public class GeminiClient : IGeminiClient
                 {
                     _logger.LogError("Gemini Embedding API key is expired or invalid. Using API key: {ApiKeyPrefix}... Please update the API key in appsettings.json or environment variable Gemini__ApiKey", 
                         apiKey?.Substring(0, Math.Min(20, apiKey?.Length ?? 0)));
+                    GeminiApiSemaphore.Release();
                     return Array.Empty<float>();
                 }
 
@@ -261,6 +265,7 @@ public class GeminiClient : IGeminiClient
                     if (attempt < maxRetries - 1)
                     {
                         _logger.LogWarning("Gemini embedding API rate limited, will retry. Attempt {Attempt}/{MaxRetries}", attempt + 1, maxRetries);
+                        GeminiApiSemaphore.Release();
                         continue;
                     }
                 }
@@ -272,9 +277,11 @@ public class GeminiClient : IGeminiClient
                 if (attempt < maxRetries - 1 && response.StatusCode >= System.Net.HttpStatusCode.InternalServerError)
                 {
                     // Retry on server errors
+                    GeminiApiSemaphore.Release();
                     continue;
                 }
                 
+                GeminiApiSemaphore.Release();
                 return Array.Empty<float>();
             }
             catch (HttpRequestException httpEx) when (attempt < maxRetries - 1)
@@ -294,14 +301,6 @@ public class GeminiClient : IGeminiClient
                 _logger.LogError(ex, "Lỗi khi gọi Gemini embedding API");
                 GeminiApiSemaphore.Release();
                 return Array.Empty<float>();
-            }
-            finally
-            {
-                // Release semaphore sau mỗi attempt (nếu chưa release trong catch)
-                if (GeminiApiSemaphore.CurrentCount < 3)
-                {
-                    try { GeminiApiSemaphore.Release(); } catch { }
-                }
             }
         }
 
