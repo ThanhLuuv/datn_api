@@ -507,7 +507,7 @@ CÁCH TRẢ LỜI:
         // Define tools for dynamic data
         var tools = new
         {
-            function_declarations = new[]
+            function_declarations = new object[]
             {
                 new
                 {
@@ -584,7 +584,7 @@ CÁCH TRẢ LỜI:
             }
         };
 
-        const string systemPrompt = $@"Bạn là trợ lý AI của hệ thống quản lý nhà sách BookStore.
+        var systemPrompt = $@"Bạn là trợ lý AI của hệ thống quản lý nhà sách BookStore.
 
 NGÀY HIỆN TẠI: {DateTime.Now:dd/MM/yyyy HH:mm} (Múi giờ Việt Nam)
 

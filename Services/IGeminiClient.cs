@@ -16,6 +16,7 @@ public interface IGeminiClient
     string? ExtractFirstTextFromResponse(JsonDocument doc);
 
     Task<string?> UploadFileAsync(Stream fileStream, string displayName, string mimeType, CancellationToken cancellationToken);
+    Task<string?> UploadFileToStoreAsync(Stream fileStream, string storeName, string mimeType, CancellationToken cancellationToken);
     Task<string?> CreateFileSearchStoreAsync(string displayName, CancellationToken cancellationToken);
     Task AddFileToStoreAsync(string storeName, string fileUri, CancellationToken cancellationToken);
     Task<string?> GenerateContentWithToolAsync(string systemPrompt, string userPayload, object toolConfig, CancellationToken cancellationToken);

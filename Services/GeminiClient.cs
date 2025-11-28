@@ -378,187 +378,7 @@ public class GeminiClient : IGeminiClient
         
         return true;
     }
-    public async Task<string?> UploadFileAsync(Stream fileStream, string displayName, string mimeType, CancellationToken cancellationToken)
-    {
-        if (!TryPrepareGeminiRequest(out _, out var baseUrl, out var apiKey))
-        {
-            return null;
-        }
 
-        // Upload API uses a different base URL usually, but for Gemini it's often the same or 'https://generativelanguage.googleapis.com'
-        // The upload endpoint is /upload/v1beta/files
-        var uploadUrl = $"https://generativelanguage.googleapis.com/upload/v1beta/files?key={apiKey}";
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, uploadUrl);
-        request.Headers.Add("X-Goog-Upload-Protocol", "raw");
-        request.Headers.Add("X-Goog-Upload-Header-Content-Length", fileStream.Length.ToString());
-        request.Headers.Add("X-Goog-Upload-Header-Content-Type", mimeType);
-        
-        // Wrap stream in StreamContent
-        var content = new StreamContent(fileStream);
-        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mimeType);
-        request.Content = content;
-
-        // Add display name in metadata if possible, but raw upload doesn't support metadata easily in one go.
-        // For simplicity, we just upload. To set display name, we might need multipart.
-        // Let's stick to raw for now.
-
-        await GeminiApiSemaphore.WaitAsync(cancellationToken);
-        try
-        {
-            var response = await _httpClient.SendAsync(request, cancellationToken);
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogError("Failed to upload file. Status: {Status}, Body: {Body}", response.StatusCode, responseContent);
-                return null;
-            }
-
-            using var doc = JsonDocument.Parse(responseContent);
-            if (doc.RootElement.TryGetProperty("file", out var fileElement) && 
-                fileElement.TryGetProperty("name", out var nameElement)) // 'name' is the URI (files/...)
-            {
-                return nameElement.GetString();
-            }
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error uploading file to Gemini");
-            return null;
-        }
-        finally
-        {
-            GeminiApiSemaphore.Release();
-        }
-    }
-
-    public async Task<string?> CreateFileSearchStoreAsync(string displayName, CancellationToken cancellationToken)
-    {
-        if (!TryPrepareGeminiRequest(out _, out var baseUrl, out var apiKey))
-        {
-            return null;
-        }
-
-        var url = $"{baseUrl}/v1beta/fileSearchStores?key={apiKey}";
-        var body = new { displayName = displayName };
-
-        var doc = await CallGeminiCustomAsync(body, null, baseUrl, apiKey, cancellationToken, url); // Pass url explicitly
-        if (doc == null) return null;
-
-        if (doc.RootElement.TryGetProperty("name", out var nameElement))
-        {
-                if (attempt < maxRetries - 1 && response.StatusCode >= System.Net.HttpStatusCode.InternalServerError)
-                {
-                    // Retry on server errors
-                    continue;
-                }
-                
-                return Array.Empty<float>();
-            }
-            catch (HttpRequestException httpEx) when (attempt < maxRetries - 1)
-            {
-                _logger.LogWarning(httpEx, "HTTP error calling Gemini embedding API, will retry. Attempt {Attempt}/{MaxRetries}", attempt + 1, maxRetries);
-                GeminiApiSemaphore.Release();
-                continue;
-            }
-            catch (TaskCanceledException timeoutEx) when (attempt < maxRetries - 1)
-            {
-                _logger.LogWarning(timeoutEx, "Timeout calling Gemini embedding API, will retry. Attempt {Attempt}/{MaxRetries}", attempt + 1, maxRetries);
-                GeminiApiSemaphore.Release();
-                continue;
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-            {
-                _logger.LogError(ex, "Lỗi khi gọi Gemini embedding API");
-                GeminiApiSemaphore.Release();
-                return Array.Empty<float>();
-            }
-            finally
-            {
-                // Release semaphore sau mỗi attempt (nếu chưa release trong catch)
-                if (GeminiApiSemaphore.CurrentCount < 3)
-                {
-                    try { GeminiApiSemaphore.Release(); } catch { }
-                }
-            }
-        }
-
-        return Array.Empty<float>();
-    }
-
-    public string? ExtractFirstTextFromResponse(JsonDocument doc)
-    {
-        if (!doc.RootElement.TryGetProperty("candidates", out var candidates) || candidates.ValueKind != JsonValueKind.Array)
-        {
-            return null;
-        }
-
-        foreach (var candidate in candidates.EnumerateArray())
-        {
-            if (!candidate.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Object)
-            {
-                continue;
-            }
-
-            if (!content.TryGetProperty("parts", out var parts) || parts.ValueKind != JsonValueKind.Array)
-            {
-                continue;
-            }
-
-            foreach (var part in parts.EnumerateArray())
-            {
-                if (part.TryGetProperty("text", out var textProp) && textProp.ValueKind == JsonValueKind.String)
-                {
-                    var text = textProp.GetString();
-                    if (!string.IsNullOrWhiteSpace(text))
-                    {
-                        return text;
-                    }
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private bool TryPrepareGeminiRequest(out string model, out string baseUrl, out string apiKey)
-    {
-        var envKey = Environment.GetEnvironmentVariable("Gemini__ApiKey");
-        var configKey = _configuration["Gemini:ApiKey"];
-        
-        apiKey = envKey ?? configKey ?? string.Empty;
-        
-        // Log để debug API key đang được dùng
-        _logger.LogInformation("Loading Gemini API key - Env var: {HasEnv}, Config: {HasConfig}, Key: {ApiKeyPrefix}...{ApiKeySuffix} (Length: {Length})", 
-            !string.IsNullOrEmpty(envKey), 
-            !string.IsNullOrEmpty(configKey),
-            apiKey?.Length > 10 ? apiKey.Substring(0, 10) : "N/A",
-            apiKey?.Length > 10 ? apiKey.Substring(apiKey.Length - 10) : "N/A",
-            apiKey?.Length ?? 0);
-        
-        if (string.IsNullOrWhiteSpace(apiKey))
-        {
-            var hasEnv = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("Gemini__ApiKey"));
-            var hasConfig = !string.IsNullOrEmpty(_configuration["Gemini:ApiKey"]);
-            _logger.LogWarning("Gemini:ApiKey is not configured. Env var: {HasEnv}, Config: {HasConfig}. Please set Gemini__ApiKey environment variable.", 
-                hasEnv, hasConfig);
-            model = DefaultModel;
-            baseUrl = "https://generativelanguage.googleapis.com";
-            return false;
-        }
-
-        model = Environment.GetEnvironmentVariable("Gemini__Model")
-            ?? _configuration["Gemini:Model"] 
-            ?? DefaultModel;
-        
-        baseUrl = (Environment.GetEnvironmentVariable("Gemini__BaseUrl")
-            ?? _configuration["Gemini:BaseUrl"] 
-            ?? "https://generativelanguage.googleapis.com").TrimEnd('/');
-        
-        return true;
-    }
     public async Task<string?> UploadFileAsync(Stream fileStream, string displayName, string mimeType, CancellationToken cancellationToken)
     {
         if (!TryPrepareGeminiRequest(out _, out var baseUrl, out var apiKey))
@@ -735,7 +555,7 @@ public class GeminiClient : IGeminiClient
             {
                 parts = new[] { new { text = systemPrompt } }
             },
-            contents = new[]
+            contents = new object[]
             {
                 new
                 {
@@ -743,7 +563,7 @@ public class GeminiClient : IGeminiClient
                     parts = new[] { new { text = userPayload } }
                 }
             },
-            tools = new[] { toolConfig },
+            tools = new object[] { toolConfig },
             generationConfig = new { temperature = 0.5 }
         };
 
@@ -783,7 +603,7 @@ public class GeminiClient : IGeminiClient
                     parts = new[] { new { text = userPayload } }
                 }
             },
-            tools = new[] { toolConfig },
+            tools = new object[] { toolConfig },
             generationConfig = new { temperature = 0.3 }
         };
 
@@ -809,7 +629,7 @@ public class GeminiClient : IGeminiClient
             {
                 parts = new[] { new { text = systemPrompt } }
             },
-            contents = new[]
+            contents = new object[]
             {
                 new
                 {
