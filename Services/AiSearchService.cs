@@ -188,17 +188,30 @@ CÁCH TRẢ LỜI:
                 };
             }
 
-            // Upload File directly to Store
+            // Upload raw file to Gemini, then attach that resource to the store
             using var stream = File.OpenRead(tempPath);
-            var fileUri = await _geminiClient.UploadFileToStoreAsync(stream, storeName, "text/plain", cancellationToken);
-
+            var fileUri = await _geminiClient.UploadFileAsync(stream, fileName, "text/plain", cancellationToken);
             if (string.IsNullOrEmpty(fileUri))
             {
                 return new ApiResponse<AiSearchReindexResponse>
                 {
                     Success = false,
-                    Message = "Upload file vào Store thất bại",
-                    Errors = new List<string> { "Upload to Store failed" }
+                    Message = "Upload file raw lên Gemini thất bại",
+                    Errors = new List<string> { "Upload raw file failed" }
+                };
+            }
+
+            try
+            {
+                await _geminiClient.AddFileToStoreAsync(storeName, fileUri, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                return new ApiResponse<AiSearchReindexResponse>
+                {
+                    Success = false,
+                    Message = "Link file vào Store thất bại: " + ex.Message,
+                    Errors = new List<string> { ex.Message }
                 };
             }
 
