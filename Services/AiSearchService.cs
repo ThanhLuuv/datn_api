@@ -189,7 +189,8 @@ CÁCH TRẢ LỜI:
             }
 
             // Give Gemini some time to propagate the new store before linking files
-            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+            _logger.LogInformation("Waiting 3 seconds for store propagation...");
+            await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
 
             // Upload raw file to Gemini, then attach that resource to the store
             using var stream = File.OpenRead(tempPath);
@@ -208,14 +209,11 @@ CÁCH TRẢ LỜI:
             {
                 await _geminiClient.AddFileToStoreAsync(storeName, fileUri, cancellationToken);
             }
-            catch (Exception ex)
+            catch (Exception firstEx)
             {
-                return new ApiResponse<AiSearchReindexResponse>
-                {
-                    Success = false,
-                    Message = "Link file vào Store thất bại: " + ex.Message,
-                    Errors = new List<string> { ex.Message }
-                };
+                _logger.LogWarning(firstEx, "First attempt to add file to store failed, retrying after delay...");
+                await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+                await _geminiClient.AddFileToStoreAsync(storeName, fileUri, cancellationToken);
             }
 
             // Save Store Name
