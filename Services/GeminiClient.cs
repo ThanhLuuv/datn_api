@@ -466,12 +466,9 @@ public class GeminiClient : IGeminiClient
         var url = $"{baseUrl}/v1beta/{storeName}/files?key={apiKey}";
         var body = new
         {
-            file = new
+            source = new
             {
-                source = new
-                {
-                    fileUri = fileUri
-                }
+                fileUri = fileUri
             }
         };
 
