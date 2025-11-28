@@ -188,6 +188,9 @@ CÁCH TRẢ LỜI:
                 };
             }
 
+            // Give Gemini some time to propagate the new store before linking files
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+
             // Upload raw file to Gemini, then attach that resource to the store
             using var stream = File.OpenRead(tempPath);
             var fileUri = await _geminiClient.UploadFileAsync(stream, fileName, "text/plain", cancellationToken);

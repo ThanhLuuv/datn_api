@@ -464,7 +464,16 @@ public class GeminiClient : IGeminiClient
 
         // Endpoint: POST /v1beta/{storeName}/files
         var url = $"{baseUrl}/v1beta/{storeName}/files?key={apiKey}";
-        var body = new { resourceName = fileUri };
+        var body = new
+        {
+            file = new
+            {
+                source = new
+                {
+                    fileUri = fileUri
+                }
+            }
+        };
 
         // We can use CallGeminiCustomAsync but we don't expect a return value really, just success.
         // But CallGeminiCustomAsync expects a response body.
