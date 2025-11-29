@@ -462,13 +462,22 @@ public class GeminiClient : IGeminiClient
             return;
         }
 
-        // Endpoint: POST /v1beta/{storeName}/files
-        var url = $"{baseUrl}/v1beta/{storeName}/files?key={apiKey}";
+        // Endpoint: POST /v1beta/{storeName}/files:batchCreate
+        var url = $"{baseUrl}/v1beta/{storeName}/files:batchCreate?key={apiKey}";
         var body = new
         {
-            source = new
+            requests = new[]
             {
-                fileUri = fileUri
+                new
+                {
+                    file = new
+                    {
+                        source = new
+                        {
+                            fileUri = fileUri
+                        }
+                    }
+                }
             }
         };
 
