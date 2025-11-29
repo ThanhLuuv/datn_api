@@ -261,7 +261,48 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ theo schema:
 
         try
         {
-            using var doc = JsonDocument.Parse(aiResultJson);
+            // Loại bỏ markdown code block nếu có (```json ... ``` hoặc ``` ... ```)
+            var cleanedJson = aiResultJson.Trim();
+            
+            // Xử lý markdown code block: ```json hoặc ```
+            if (cleanedJson.StartsWith("```"))
+            {
+                // Tìm dòng đầu tiên (có thể là ```json hoặc ```)
+                var firstNewline = cleanedJson.IndexOf('\n');
+                if (firstNewline >= 0)
+                {
+                    cleanedJson = cleanedJson.Substring(firstNewline + 1);
+                }
+                else
+                {
+                    // Nếu không có newline, tìm sau ```json hoặc ```
+                    var markerEnd = cleanedJson.IndexOf("```", 3);
+                    if (markerEnd >= 0)
+                    {
+                        cleanedJson = cleanedJson.Substring(markerEnd + 3);
+                    }
+                    else if (cleanedJson.StartsWith("```json", StringComparison.OrdinalIgnoreCase))
+                    {
+                        cleanedJson = cleanedJson.Substring(7);
+                    }
+                    else if (cleanedJson.StartsWith("```"))
+                    {
+                        cleanedJson = cleanedJson.Substring(3);
+                    }
+                }
+            }
+            
+            // Loại bỏ closing ``` ở cuối
+            cleanedJson = cleanedJson.TrimEnd();
+            if (cleanedJson.EndsWith("```"))
+            {
+                cleanedJson = cleanedJson.Substring(0, cleanedJson.Length - 3).TrimEnd();
+            }
+            
+            // Loại bỏ các ký tự markdown còn sót lại
+            cleanedJson = cleanedJson.Trim();
+
+            using var doc = JsonDocument.Parse(cleanedJson);
             var root = doc.RootElement;
 
             if (root.TryGetProperty("overallSummary", out var overallSummaryProp) &&
