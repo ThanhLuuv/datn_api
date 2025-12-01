@@ -200,24 +200,24 @@ public class AiService : IAiService
         }).ToList();
 
         var systemPrompt = @"Bạn là trợ lý tư vấn sách cho nhà sách Việt Nam.
-Nhiệm vụ:
-- Đọc nhu cầu khách hàng và danh sách sách ứng viên.
-- Chọn ra tối đa N cuốn phù hợp nhất.
-- Với mỗi cuốn, viết tóm tắt ngắn (2‑4 câu) và nêu lý do vì sao phù hợp (1‑2 câu).
-- Ưu tiên sách bán chạy (totalSold90d cao), phù hợp chủ đề, năm xuất bản còn mới, và giá phù hợp.
+        Nhiệm vụ:
+        - Đọc nhu cầu khách hàng và danh sách sách ứng viên.
+        - Chọn ra tối đa N cuốn phù hợp nhất.
+        - Với mỗi cuốn, viết tóm tắt ngắn (2‑4 câu) và nêu lý do vì sao phù hợp (1‑2 câu).
+        - Ưu tiên sách bán chạy (totalSold90d cao), phù hợp chủ đề, năm xuất bản còn mới, và giá phù hợp.
 
-TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ theo schema:
-{
-  ""recommendations"": [
-    {
-      ""isbn"": ""..."",
-      ""aiSummary"": ""tóm tắt nội dung & đánh giá"",
-      ""aiReason"": ""lý do cuốn này phù hợp"",
-      ""score"": 0-100
-    }
-  ],
-  ""overallSummary"": ""tóm tắt chung, tối đa 3 câu""
-}";
+        TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ theo schema:
+        {
+        ""recommendations"": [
+            {
+            ""isbn"": ""..."",
+            ""aiSummary"": ""tóm tắt nội dung & đánh giá"",
+            ""aiReason"": ""lý do cuốn này phù hợp"",
+            ""score"": 0-100
+            }
+        ],
+        ""overallSummary"": ""tóm tắt chung, tối đa 3 câu""
+        }";
 
         var userPrompt = new
         {
@@ -379,8 +379,12 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ theo schema:
         AdminAiAssistantRequest request,
         CancellationToken cancellationToken = default)
     {
-        var from = request.FromDate ?? DateTime.UtcNow.AddDays(-30);
-        var to = request.ToDate ?? DateTime.UtcNow;
+        // Luôn phân tích mặc định trên 30 ngày gần nhất nếu client không truyền,
+        // để tránh phụ thuộc vào "trong tháng" của các API báo cáo bên dưới.
+        var nowUtcDate = DateTime.UtcNow.Date;
+        var defaultFrom = nowUtcDate.AddDays(-30);
+        var from = request.FromDate?.Date ?? defaultFrom;
+        var to = request.ToDate?.Date ?? nowUtcDate;
 
         // 1) Lấy báo cáo lợi nhuận để có TopSoldItems / TopMarginItems
         var profitReport = await _reportService.GetProfitReportAsync(from, to);
@@ -412,7 +416,17 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ theo schema:
             })
             .ToDictionaryAsync(x => x.Isbn, x => new { x.AvgStars, x.Count }, cancellationToken);
 
-        // 3) Chuẩn bị payload cho AI
+        // 3) Lấy thêm thông tin tồn kho hiện tại cho các ISBN trong top bán chạy
+        var inventoryStats = await _db.Books
+            .Where(b => topIsbns.Contains(b.Isbn))
+            .Select(b => new
+            {
+                b.Isbn,
+                b.Stock
+            })
+            .ToDictionaryAsync(x => x.Isbn, x => x.Stock, cancellationToken);
+
+        // 4) Chuẩn bị payload cho AI (có bổ sung tồn kho & cờ low-stock)
         var payload = new
         {
             type = "admin_assistant",
@@ -438,6 +452,8 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ theo schema:
                 i.Revenue,
                 i.Cogs,
                 i.Profit,
+                stock = inventoryStats.TryGetValue(i.Isbn, out var stockTs) ? stockTs : (int?)null,
+                isLowStock = inventoryStats.TryGetValue(i.Isbn, out var stockTs2) && stockTs2 < 15,
                 ratings = ratingStats.TryGetValue(i.Isbn, out var rs)
                     ? new { avgStars = rs.AvgStars, count = rs.Count }
                     : null
@@ -451,6 +467,8 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ theo schema:
                 i.Cogs,
                 i.Profit,
                 i.MarginPct,
+                stock = inventoryStats.TryGetValue(i.Isbn, out var stockTm) ? stockTm : (int?)null,
+                isLowStock = inventoryStats.TryGetValue(i.Isbn, out var stockTm2) && stockTm2 < 15,
                 ratings = ratingStats.TryGetValue(i.Isbn, out var rs)
                     ? new { avgStars = rs.AvgStars, count = rs.Count }
                     : null
@@ -458,13 +476,16 @@ TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ theo schema:
         };
 
         var systemPrompt = @"Bạn là trợ lý phân tích dữ liệu bán hàng cho nhà sách.
-Input: danh sách sách bán chạy, lợi nhuận, và thống kê đánh giá khách hàng.
+Input: danh sách sách bán chạy, lợi nhuận, thống kê đánh giá khách hàng VÀ tồn kho hiện tại.
 Nhiệm vụ:
 - Nhận diện các mặt hàng/bộ sách bán chạy.
 - Gợi ý những danh mục (thể loại) nên ưu tiên nhập thêm.
 - Gợi ý sách nên:
-  + nhập thêm (nếu đã có và có nguy cơ thiếu hàng),
+  + nhập thêm (nếu đã có và tồn kho thấp, chỉ cảnh báo và gợi ý nhập thêm nếu tồn kho hiện tại < 15 cuốn),
   + hoặc nhập mới (nếu thấy thiếu phân khúc, chủ đề).
+- Khi lý do đề xuất nhập thêm sách đã có sẵn, hãy nêu rõ:
+  + tồn kho hiện tại còn bao nhiêu (dựa vào field stock),
+  + và đề xuất cụ thể nên nhập thêm khoảng bao nhiêu cuốn.
 - Tổng hợp các nhận xét nổi bật từ đánh giá (ưu/nhược điểm) và đề xuất cải thiện dịch vụ/chất lượng.
 
 TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:

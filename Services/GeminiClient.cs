@@ -462,29 +462,20 @@ public class GeminiClient : IGeminiClient
             return;
         }
 
-        // Endpoint: POST /v1beta/{storeName}/files:batchCreate
-        var url = $"{baseUrl}/v1beta/{storeName}/files:batchCreate?key={apiKey}";
+        // Endpoint: POST /v1beta/{storeName}/files
+        // Note: We use the single file creation endpoint instead of batchCreate which might not be supported
+        var url = $"{baseUrl}/v1beta/{storeName}/files?key={apiKey}";
+        
+        // The body should be a File resource with the source pointing to the uploaded file
+        // Note: fileUri here is the resource name (e.g. files/...) returned by UploadFileAsync
         var body = new
         {
-            requests = new[]
+            source = new
             {
-                new
-                {
-                    file = new
-                    {
-                        source = new
-                        {
-                            fileUri = fileUri
-                        }
-                    }
-                }
+                fileUri = fileUri
             }
         };
 
-        // We can use CallGeminiCustomAsync but we don't expect a return value really, just success.
-        // But CallGeminiCustomAsync expects a response body.
-        
-        // Let's manually call to handle void return or check errors
         using var requestMessage = new HttpRequestMessage(HttpMethod.Post, url);
         requestMessage.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
 
@@ -512,9 +503,9 @@ public class GeminiClient : IGeminiClient
             return null;
         }
 
-        // Endpoint: POST https://generativelanguage.googleapis.com/upload/v1beta/{storeName}:upload?key={apiKey}
+        // Endpoint: POST https://generativelanguage.googleapis.com/upload/v1beta/{storeName}:uploadToFileSearchStore?key={apiKey}
         // Note: storeName includes "fileSearchStores/..."
-        var uploadUrl = $"https://generativelanguage.googleapis.com/upload/v1beta/{storeName}:upload?key={apiKey}";
+        var uploadUrl = $"https://generativelanguage.googleapis.com/upload/v1beta/{storeName}:uploadToFileSearchStore?key={apiKey}";
 
         using var request = new HttpRequestMessage(HttpMethod.Post, uploadUrl);
         request.Headers.Add("X-Goog-Upload-Protocol", "raw");
@@ -538,6 +529,7 @@ public class GeminiClient : IGeminiClient
             }
 
             using var doc = JsonDocument.Parse(responseContent);
+            // The response for uploadToFileSearchStore contains a 'file' object
             if (doc.RootElement.TryGetProperty("file", out var fileElement) && 
                 fileElement.TryGetProperty("name", out var nameElement))
             {
