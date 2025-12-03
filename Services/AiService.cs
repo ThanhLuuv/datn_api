@@ -426,7 +426,7 @@ public class AiService : IAiService
             })
             .ToDictionaryAsync(x => x.Isbn, x => x.Stock, cancellationToken);
 
-        // 4) Chuẩn bị payload cho AI (có bổ sung tồn kho & cờ low-stock)
+        // 4) Chuẩn bị payload cho AI (có bổ sung tồn kho & cờ low-stock trên từng sách bán chạy)
         var payload = new
         {
             type = "admin_assistant",
@@ -444,7 +444,13 @@ public class AiService : IAiService
                 profitReport.Data.OperatingExpenses,
                 profit = profitReport.Data.Profit
             },
-            topSoldItems = profitReport.Data.TopSoldItems.Select(i => new
+            // các sách bán chạy (dùng để phân tích xu hướng & đưa ra khuyến nghị nhập thêm)
+            // CHỈ lấy tối đa 5 sách bán chạy nhất để tránh payload quá lớn và bám đúng yêu cầu business.
+            topSoldItems = profitReport.Data.TopSoldItems
+                .OrderByDescending(i => i.QtySold)
+                .ThenByDescending(i => i.Revenue)
+                .Take(5)
+                .Select(i => new
             {
                 i.Isbn,
                 i.Title,
@@ -453,12 +459,18 @@ public class AiService : IAiService
                 i.Cogs,
                 i.Profit,
                 stock = inventoryStats.TryGetValue(i.Isbn, out var stockTs) ? stockTs : (int?)null,
+                // isLowStock: true nếu tồn kho hiện tại dưới 15 cuốn
                 isLowStock = inventoryStats.TryGetValue(i.Isbn, out var stockTs2) && stockTs2 < 15,
                 ratings = ratingStats.TryGetValue(i.Isbn, out var rs)
                     ? new { avgStars = rs.AvgStars, count = rs.Count }
                     : null
             }).ToList(),
-            topMarginItems = profitReport.Data.TopMarginItems.Select(i => new
+            // các sách biên lợi nhuận cao (giới hạn tối đa 5 mục để tham khảo thêm)
+            topMarginItems = profitReport.Data.TopMarginItems
+                .OrderByDescending(i => i.MarginPct)
+                .ThenByDescending(i => i.Profit)
+                .Take(5)
+                .Select(i => new
             {
                 i.Isbn,
                 i.Title,
@@ -476,19 +488,45 @@ public class AiService : IAiService
         };
 
         var systemPrompt = @"Bạn là trợ lý phân tích dữ liệu bán hàng cho nhà sách.
-Input: danh sách sách bán chạy, lợi nhuận, thống kê đánh giá khách hàng VÀ tồn kho hiện tại.
-Nhiệm vụ:
-- Nhận diện các mặt hàng/bộ sách bán chạy.
-- Gợi ý những danh mục (thể loại) nên ưu tiên nhập thêm.
-- Gợi ý sách nên:
-  + nhập thêm (nếu đã có và tồn kho thấp, chỉ cảnh báo và gợi ý nhập thêm nếu tồn kho hiện tại < 15 cuốn),
-  + hoặc nhập mới (nếu thấy thiếu phân khúc, chủ đề).
-- Khi lý do đề xuất nhập thêm sách đã có sẵn, hãy nêu rõ:
-  + tồn kho hiện tại còn bao nhiêu (dựa vào field stock),
-  + và đề xuất cụ thể nên nhập thêm khoảng bao nhiêu cuốn.
-- Tổng hợp các nhận xét nổi bật từ đánh giá (ưu/nhược điểm) và đề xuất cải thiện dịch vụ/chất lượng.
+Input: 
+- danh sách sách bán chạy (topSoldItems: với thông tin QtySold, Revenue, Profit, stock, isLowStock),
+- danh sách sách biên lợi nhuận cao (topMarginItems),
+- lợi nhuận tổng thể,
+- thống kê đánh giá khách hàng,
+- tồn kho hiện tại.
 
-TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON hợp lệ:
+Nhiệm vụ (rất quan trọng – phải làm đúng thứ tự và đúng cấu trúc JSON yêu cầu):
+
+1) TRƯỚC TIÊN, hãy duyệt qua danh sách topSoldItems:
+   - Đây đã là tối đa 5 sách bán chạy nhất do backend lọc sẵn.
+   - Với MỖI sách trong topSoldItems, nếu isbn không rỗng, hãy tạo MỘT mục tương ứng trong mảng bookSuggestions để phân tích và khuyến nghị.
+   - Với các mục này:
+     + Luôn điền đúng isbn (vì đây là sách đã có sẵn trong hệ thống).
+     + Trong field ""reason"", BẮT BUỘC phải:
+       * Tóm tắt sách đó đang bán chạy như thế nào (dựa trên QtySold / Revenue / Profit trong giai đoạn được cung cấp).
+       * Nêu rõ tồn kho hiện tại (stock) còn bao nhiêu cuốn nếu có dữ liệu stock.
+       * Nếu isLowStock = true (tức stock < 15): thêm cảnh báo tồn kho và gợi ý cụ thể nên nhập thêm khoảng bao nhiêu cuốn (dựa trên tốc độ bán và mức tồn hiện tại).
+       * Nếu isLowStock = false: ghi rõ rằng tồn kho hiện vẫn an toàn, có thể CHƯA cần nhập gấp nhưng nên tiếp tục theo dõi xu hướng.
+
+2) SAU KHI ĐÃ TẠO ĐẦY ĐỦ các bookSuggestions cho những sách đang có trong topSoldItems, bạn CÓ THỂ gợi ý THÊM TỐI ĐA 3 tựa sách MỚI CHƯA CÓ trong kho:
+   - Với sách mới, để isbn = """" (chuỗi rỗng).
+   - Tổng số sách mới (isbn rỗng) trong mảng bookSuggestions không được vượt quá 3.
+   - Lý do nên tập trung vào khoảng trống danh mục, xu hướng thị trường, hoặc nhu cầu tiềm năng chưa được đáp ứng trong dữ liệu hiện tại.
+
+3) Gợi ý những danh mục (thể loại) nên ưu tiên nhập thêm dựa trên:
+   - các nhóm sách đang bán chạy,
+   - các nhóm sách có biên lợi nhuận tốt,
+   - và các mảng nội dung còn thiếu hụt.
+
+4) Tổng hợp các nhận xét nổi bật từ đánh giá (ưu/nhược điểm) và đề xuất cải thiện dịch vụ/chất lượng.
+
+TRẢ LỜI DUY NHẤT DƯỚI DẠNG JSON HỢP LỆ, TUÂN THỦ CÁC QUY TẮC SAU:
+- Không được bao bọc JSON trong ```json``` hoặc bất kỳ markdown code block nào.
+- Không được thêm bất kỳ text nào bên ngoài JSON (không giải thích thêm, không prefix/suffix).
+- Không được có dấu phẩy thừa ở cuối phần tử mảng hoặc cuối object.
+- Không được thêm comment, xuống dòng tự do bên ngoài cấu trúc JSON.
+
+Dạng JSON bắt buộc:
 {
   ""overview"": ""tóm tắt chung về tình hình bán hàng"",
   ""recommendedCategories"": [""..."", ""...""],
