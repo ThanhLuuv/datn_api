@@ -1,11 +1,10 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using BookStore.Api.Configuration;
 using BookStore.Api.DTOs;
 using Dapper;
 using Microsoft.Extensions.Options;
-using Microsoft.SemanticKernel;
-using Microsoft.SemanticKernel.ChatCompletion;
 using MySqlConnector;
 
 namespace BookStore.Api.Services;
@@ -15,13 +14,16 @@ public class TextToSqlService : ITextToSqlService
     private readonly TextToSqlOptions _options;
     private readonly string _defaultConnectionString;
     private readonly ILogger<TextToSqlService> _logger;
+    private readonly IGeminiClient _geminiClient;
 
     public TextToSqlService(
         IOptions<TextToSqlOptions> options,
         IConfiguration configuration,
+        IGeminiClient geminiClient,
         ILogger<TextToSqlService> logger)
     {
         _options = options.Value;
+        _geminiClient = geminiClient;
         _logger = logger;
         _defaultConnectionString = configuration.GetConnectionString("DefaultConnection") ?? string.Empty;
     }
@@ -31,11 +33,6 @@ public class TextToSqlService : ITextToSqlService
         if (!_options.Enabled)
         {
             return DisabledResponse("Tính năng Text-to-SQL đang được tắt.");
-        }
-
-        if (string.IsNullOrWhiteSpace(_options.OpenAiApiKey))
-        {
-            return DisabledResponse("Chưa cấu hình OpenAI API key cho Text-to-SQL.");
         }
 
         if (string.IsNullOrWhiteSpace(_options.DbSchema))
@@ -55,20 +52,28 @@ public class TextToSqlService : ITextToSqlService
 
         try
         {
-            var chatService = CreateChatService();
             var trimmedQuestion = request.Question.Trim();
-            var sql = await GenerateSqlFromQuestionAsync(chatService, trimmedQuestion, cancellationToken);
+            var recentMessages = request.RecentMessages ?? new List<TextToSqlChatMessage>();
+            var sql = await GenerateSqlFromQuestionAsync(trimmedQuestion, recentMessages, cancellationToken);
 
+            // Trường hợp AI trả về INVALID: không liên quan schema hoặc chưa hiểu rõ câu hỏi.
+            // Khi đó, tiếp tục gọi Gemini để tạo câu trả lời/ câu hỏi làm rõ cho người dùng (không lộ chi tiết kỹ thuật).
             if (string.Equals(sql, "INVALID", StringComparison.OrdinalIgnoreCase))
             {
+                var clarification = await GenerateClarificationAsync(trimmedQuestion, recentMessages, cancellationToken);
+
                 return new ApiResponse<TextToSqlResponse>
                 {
-                    Success = false,
-                    Message = "Câu hỏi không thể trả lời bằng dữ liệu hiện có.",
+                    Success = true,
+                    Message = "AI cần người dùng làm rõ thêm câu hỏi.",
                     Data = new TextToSqlResponse
                     {
                         Question = trimmedQuestion,
-                        SqlQuery = sql
+                        SqlQuery = null,
+                        Answer = clarification,
+                        RowCount = 0,
+                        Rows = new List<Dictionary<string, object?>>(),
+                        DataPreview = null
                     }
                 };
             }
@@ -93,10 +98,10 @@ public class TextToSqlService : ITextToSqlService
             var tablePreview = BuildTablePreview(queryResult.Rows);
 
             var answer = await GenerateAnswerFromDataAsync(
-                chatService,
                 trimmedQuestion,
                 tablePreview,
                 queryResult.Rows.Count == 0,
+                recentMessages,
                 cancellationToken);
 
             return new ApiResponse<TextToSqlResponse>
@@ -136,35 +141,40 @@ public class TextToSqlService : ITextToSqlService
         };
     }
 
-    private IChatCompletionService CreateChatService()
-    {
-        var kernelBuilder = Kernel.CreateBuilder();
-        kernelBuilder.AddOpenAIChatCompletion(_options.ModelId, _options.OpenAiApiKey);
-        var kernel = kernelBuilder.Build();
-        return kernel.GetRequiredService<IChatCompletionService>();
-    }
-
     private async Task<string> GenerateSqlFromQuestionAsync(
-        IChatCompletionService chatService,
         string question,
+        IReadOnlyList<TextToSqlChatMessage> recentMessages,
         CancellationToken cancellationToken)
     {
-        var history = new ChatHistory();
-        history.AddSystemMessage($"""
+        // Cung cấp ngày hiện tại cho model để xử lý các câu hỏi theo thời gian
+        var today = DateTime.UtcNow.Date.ToString("yyyy-MM-dd");
+
+        var systemPrompt = $"""
 Bạn là chuyên gia SQL MySQL.
-Chuyển câu hỏi khách hàng thành đúng một câu lệnh SELECT duy nhất dựa trên schema:
+Nhiệm vụ của bạn: dựa trên lịch sử hội thoại gần nhất và schema dưới đây để tạo ra đúng MỘT câu lệnh SELECT trả lời cho câu hỏi hiện tại:
 {_options.DbSchema}
 
-YÊU CẦU:
-1. Chỉ trả về text của câu SQL (không dùng ```).
-2. Tuyệt đối cấm UPDATE/DELETE/INSERT/DROP.
-3. Nếu không thể trả lời bằng DB này, trả về chữ: INVALID.
-4. Với câu hỏi về thời gian, ưu tiên NOW() hoặc CURDATE().
-""");
-        history.AddUserMessage(question);
+Thông tin ngữ cảnh thời gian:
+- Hôm nay (ngày hệ thống, theo UTC) là: {today}.
+- Khi người dùng nói "hôm nay", "hôm qua", "tuần này", "tháng này", hãy hiểu tương đối dựa trên ngày hôm nay và ưu tiên dùng các hàm thời gian của MySQL như CURDATE(), NOW(), WEEK(), MONTH()... thay vì hard-code các ngày cố định trong quá khứ.
 
-        var response = await chatService.GetChatMessageContentAsync(history, cancellationToken: cancellationToken);
-        var content = response.Content ?? string.Empty;
+Nguyên tắc:
+- Luôn đọc và hiểu các tin nhắn trước đó để giải nghĩa các đại từ như "người đó", "khách này", "đơn kia"… 
+- Chỉ dùng câu lệnh SELECT (kèm JOIN/WHERE/GROUP BY/ORDER BY/LIMIT nếu cần). Tuyệt đối không dùng các lệnh ghi dữ liệu (UPDATE/DELETE/INSERT/DROP/ALTER...).
+- Chỉ trả về đúng nội dung câu SQL ở dạng text thuần (không markdown, không ```).
+- Nếu câu hỏi nằm ngoài phạm vi dữ liệu của schema (ví dụ hỏi thời tiết, bóng đá, tin tức...), khi đó mới trả về đúng chuỗi: INVALID.
+""";
+
+        var userPayload = JsonSerializer.Serialize(new
+        {
+            question,
+            recentMessages = recentMessages
+                .Take(5)
+                .Select(m => new { role = m.Role, content = m.Content })
+        });
+
+        var content = await _geminiClient.CallGeminiAsync(systemPrompt, userPayload, cancellationToken) ?? string.Empty;
+
         return content
             .Replace("```sql", string.Empty, StringComparison.OrdinalIgnoreCase)
             .Replace("```", string.Empty, StringComparison.OrdinalIgnoreCase)
@@ -182,6 +192,9 @@ YÊU CẦU:
             throw new InvalidOperationException("Không tìm thấy chuỗi kết nối cho Text-to-SQL.");
         }
 
+        // Log câu SQL để tiện debug và theo dõi
+        _logger.LogInformation("TextToSqlService - Executing SQL: {Sql}", sql);
+
         await using var connection = new MySqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
 
@@ -198,22 +211,62 @@ YÊU CẦU:
     }
 
     private async Task<string> GenerateAnswerFromDataAsync(
-        IChatCompletionService chatService,
         string question,
         string dataPreview,
         bool noData,
+        IReadOnlyList<TextToSqlChatMessage> recentMessages,
         CancellationToken cancellationToken)
     {
-        var history = new ChatHistory();
-        history.AddSystemMessage("Bạn là trợ lý dữ liệu. Hãy dựa vào kết quả SQL để trả lời ngắn gọn, tiếng Việt, dễ hiểu.");
-        history.AddUserMessage($"""
-Câu hỏi: {question}
-Dữ liệu:
-{(noData ? "Không tìm thấy bản ghi phù hợp." : dataPreview)}
-""");
+        var systemPrompt = "Bạn là trợ lý dữ liệu. Hãy dựa vào kết quả SQL để trả lời ngắn gọn, tiếng Việt, dễ hiểu.";
 
-        var response = await chatService.GetChatMessageContentAsync(history, cancellationToken: cancellationToken);
-        return response.Content?.Trim() ?? "Xin lỗi, tôi chưa thể đưa ra câu trả lời.";
+        var userPayload = JsonSerializer.Serialize(new
+        {
+            question,
+            noData,
+            data = noData ? "Không tìm thấy bản ghi phù hợp." : dataPreview,
+            recentMessages = recentMessages
+                .Take(5)
+                .Select(m => new { role = m.Role, content = m.Content })
+        });
+
+        var content = await _geminiClient.CallGeminiAsync(systemPrompt, userPayload, cancellationToken);
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return "Xin lỗi, tôi chưa thể đưa ra câu trả lời.";
+        }
+
+        return content.Trim();
+    }
+
+    /// <summary>
+    /// Khi backend/LLM không sinh được SQL hợp lệ (INVALID), hàm này nhờ Gemini tạo ra
+    /// một câu trả lời thân thiện: giải thích là chưa hiểu rõ và hỏi lại đúng trọng tâm.
+    /// </summary>
+    private async Task<string> GenerateClarificationAsync(
+        string question,
+        IReadOnlyList<TextToSqlChatMessage> recentMessages,
+        CancellationToken cancellationToken)
+    {
+        const string systemPrompt =
+            "Bạn là trợ lý quản lý đơn hàng. Backend thông báo rằng câu hỏi hiện tại chưa đủ rõ để chuyển thành truy vấn SQL an toàn. " +
+            "Hãy trả lời NGẮN GỌN như một chatbot bình thường: giải thích là bạn chưa hiểu đủ rõ, và đặt 1–2 câu hỏi làm rõ cụ thể " +
+            "(ví dụ: khách nào, mã đơn nào, khoảng thời gian nào...). Không nhắc tới SQL, database, INVALID hay lỗi kỹ thuật.";
+
+        var userPayload = JsonSerializer.Serialize(new
+        {
+            question,
+            recentMessages = recentMessages
+                .Take(5)
+                .Select(m => new { role = m.Role, content = m.Content })
+        });
+
+        var content = await _geminiClient.CallGeminiAsync(systemPrompt, userPayload, cancellationToken);
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return "Hiện tại tôi chưa hiểu đủ rõ câu hỏi. Bạn có thể nói cụ thể hơn (ví dụ: khách nào, mã đơn nào, khoảng thời gian nào...) để tôi hỗ trợ chính xác hơn không?";
+        }
+
+        return content.Trim();
     }
 
     private static Dictionary<string, object?> NormalizeRow(object row)

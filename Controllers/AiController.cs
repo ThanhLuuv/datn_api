@@ -258,7 +258,7 @@ public class AiController : ControllerBase
     /// Text-to-SQL assistant (RAG) chuyển câu hỏi tự nhiên thành SQL và trả lời dựa trên dữ liệu thực tế.
     /// </summary>
     [HttpPost("text-to-sql")]
-    [Authorize(Roles = "ADMIN")]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<TextToSqlResponse>>> TextToSql(
         [FromBody] TextToSqlRequest request,
         CancellationToken cancellationToken)

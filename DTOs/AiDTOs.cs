@@ -370,6 +370,12 @@ public class TextToSqlRequest
 
     [Range(1, 200)]
     public int? MaxRows { get; set; }
+
+    /// <summary>
+    /// 3–5 tin nhắn gần nhất của cuộc hội thoại (để AI hiểu ngữ cảnh ngắn hạn).
+    /// FE có thể truyền ít hơn 3 nếu mới bắt đầu hội thoại.
+    /// </summary>
+    public List<TextToSqlChatMessage>? RecentMessages { get; set; }
 }
 
 public class TextToSqlResponse
@@ -380,6 +386,23 @@ public class TextToSqlResponse
     public int RowCount { get; set; }
     public List<Dictionary<string, object?>> Rows { get; set; } = new();
     public string? DataPreview { get; set; }
+}
+
+public class TextToSqlChatMessage
+{
+    /// <summary>
+    /// Role của tin nhắn: user hoặc assistant (có thể mở rộng thêm system nếu cần).
+    /// </summary>
+    [Required]
+    [RegularExpression("^(user|assistant|system)$", ErrorMessage = "Role must be user, assistant, or system")]
+    public string Role { get; set; } = "user";
+
+    /// <summary>
+    /// Nội dung tin nhắn.
+    /// </summary>
+    [Required]
+    [MaxLength(4000)]
+    public string Content { get; set; } = string.Empty;
 }
 
 
