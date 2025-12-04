@@ -12,11 +12,16 @@ public class AiController : ControllerBase
 {
     private readonly IAiService _aiService;
     private readonly IAiSearchService _aiSearchService;
+    private readonly ITextToSqlService _textToSqlService;
 
-    public AiController(IAiService aiService, IAiSearchService aiSearchService)
+    public AiController(
+        IAiService aiService,
+        IAiSearchService aiSearchService,
+        ITextToSqlService textToSqlService)
     {
         _aiService = aiService;
         _aiSearchService = aiSearchService;
+        _textToSqlService = textToSqlService;
     }
 
     /// <summary>
@@ -241,6 +246,39 @@ public class AiController : ControllerBase
         }
 
         var result = await _aiSearchService.ChatWithAssistantAsync(request.Query, cancellationToken);
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+
+        return BadRequest(result);
+    }
+
+    /// <summary>
+    /// Text-to-SQL assistant (RAG) chuyển câu hỏi tự nhiên thành SQL và trả lời dựa trên dữ liệu thực tế.
+    /// </summary>
+    [HttpPost("text-to-sql")]
+    [Authorize(Roles = "ADMIN")]
+    public async Task<ActionResult<ApiResponse<TextToSqlResponse>>> TextToSql(
+        [FromBody] TextToSqlRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!ModelState.IsValid)
+        {
+            var errors = ModelState.Values
+                .SelectMany(v => v.Errors)
+                .Select(e => e.ErrorMessage)
+                .ToList();
+
+            return BadRequest(new ApiResponse<TextToSqlResponse>
+            {
+                Success = false,
+                Message = "Dữ liệu không hợp lệ",
+                Errors = errors
+            });
+        }
+
+        var result = await _textToSqlService.AskAsync(request, cancellationToken);
         if (result.Success)
         {
             return Ok(result);

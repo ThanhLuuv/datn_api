@@ -1,3 +1,4 @@
+using BookStore.Api.Configuration;
 using BookStore.Api.Data;
 using BookStore.Api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -197,11 +198,13 @@ builder.Services.AddScoped<IExpenseService, ExpenseService>();
 builder.Services.AddScoped<IEmployeeService, EmployeeService>();
 builder.Services.AddScoped<IDepartmentService, DepartmentService>();
 
-// AI services (Gemini integration)
+// AI services (Gemini + Text-to-SQL)
 builder.Services.AddHttpClient<IGeminiClient, GeminiClient>();
 builder.Services.AddScoped<IOrderQueryService, OrderQueryService>();
 builder.Services.AddScoped<IAiSearchService, AiSearchService>();
 builder.Services.AddScoped<IAiService, AiService>();
+builder.Services.Configure<TextToSqlOptions>(builder.Configuration.GetSection(TextToSqlOptions.SectionName));
+builder.Services.AddScoped<ITextToSqlService, TextToSqlService>();
 
 // Health Checks
 builder.Services.AddHealthChecks()

@@ -362,4 +362,24 @@ public class AiSearchReindexResponse
     public DateTime IndexedAt { get; set; } = DateTime.UtcNow;
 }
 
+public class TextToSqlRequest
+{
+    [Required]
+    [MaxLength(1000)]
+    public string Question { get; set; } = string.Empty;
+
+    [Range(1, 200)]
+    public int? MaxRows { get; set; }
+}
+
+public class TextToSqlResponse
+{
+    public string Question { get; set; } = string.Empty;
+    public string? SqlQuery { get; set; }
+    public string? Answer { get; set; }
+    public int RowCount { get; set; }
+    public List<Dictionary<string, object?>> Rows { get; set; } = new();
+    public string? DataPreview { get; set; }
+}
+
 

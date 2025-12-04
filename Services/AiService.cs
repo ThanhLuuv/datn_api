@@ -656,33 +656,42 @@ Dạng JSON bắt buộc:
 
         if (response.BookSuggestions.Count > 0)
         {
-        var enrichTask = EnrichBookSuggestionsAsync(response.BookSuggestions, cancellationToken);
-        var priceTask = FetchMarketPriceInsightsAsync(
-            response.BookSuggestions.Select(s => s.Title),
-            cancellationToken);
+            // Chỉ enrich & tra cứu giá thị trường cho sách mới (isbn rỗng).
+            // Các sách cũ đang có trong kho đã có đủ dữ liệu nội bộ nên không cần gọi search ngoài.
+            var newBookSuggestions = response.BookSuggestions
+                .Where(s => string.IsNullOrWhiteSpace(s.Isbn))
+                .ToList();
 
-        await Task.WhenAll(enrichTask, priceTask);
-
-        var priceMap = priceTask.Result;
-
-            foreach (var suggestion in response.BookSuggestions)
+            if (newBookSuggestions.Count > 0)
             {
-                var key = NormalizeTitleKey(suggestion.Title);
-                if (!string.IsNullOrEmpty(key) && priceMap.TryGetValue(key, out var priceInfo))
-                {
-                    suggestion.MarketPrice = string.IsNullOrWhiteSpace(priceInfo.MarketPrice)
-                        ? suggestion.MarketPrice
-                        : priceInfo.MarketPrice;
-                    suggestion.MarketSourceName = string.IsNullOrWhiteSpace(priceInfo.SourceName)
-                        ? suggestion.MarketSourceName
-                        : priceInfo.SourceName;
-                    suggestion.MarketSourceUrl = string.IsNullOrWhiteSpace(priceInfo.SourceUrl)
-                        ? suggestion.MarketSourceUrl
-                        : priceInfo.SourceUrl;
-                }
+                var enrichTask = EnrichBookSuggestionsAsync(newBookSuggestions, cancellationToken);
+                var priceTask = FetchMarketPriceInsightsAsync(
+                    newBookSuggestions.Select(s => s.Title),
+                    cancellationToken);
 
-                suggestion.SuggestedPrice ??= TryParseVndPrice(suggestion.MarketPrice);
-                suggestion.SuggestedIsbn ??= await GenerateUniqueIsbnAsync(null, cancellationToken);
+                await Task.WhenAll(enrichTask, priceTask);
+
+                var priceMap = priceTask.Result;
+
+                foreach (var suggestion in newBookSuggestions)
+                {
+                    var key = NormalizeTitleKey(suggestion.Title);
+                    if (!string.IsNullOrEmpty(key) && priceMap.TryGetValue(key, out var priceInfo))
+                    {
+                        suggestion.MarketPrice = string.IsNullOrWhiteSpace(priceInfo.MarketPrice)
+                            ? suggestion.MarketPrice
+                            : priceInfo.MarketPrice;
+                        suggestion.MarketSourceName = string.IsNullOrWhiteSpace(priceInfo.SourceName)
+                            ? suggestion.MarketSourceName
+                            : priceInfo.SourceName;
+                        suggestion.MarketSourceUrl = string.IsNullOrWhiteSpace(priceInfo.SourceUrl)
+                            ? suggestion.MarketSourceUrl
+                            : priceInfo.SourceUrl;
+                    }
+
+                    suggestion.SuggestedPrice ??= TryParseVndPrice(suggestion.MarketPrice);
+                    suggestion.SuggestedIsbn ??= await GenerateUniqueIsbnAsync(null, cancellationToken);
+                }
             }
         }
 
