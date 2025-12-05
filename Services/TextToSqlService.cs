@@ -56,9 +56,11 @@ public class TextToSqlService : ITextToSqlService
             var recentMessages = request.RecentMessages ?? new List<TextToSqlChatMessage>();
             var sql = await GenerateSqlFromQuestionAsync(trimmedQuestion, recentMessages, cancellationToken);
 
-            // Trường hợp AI trả về INVALID: không liên quan schema hoặc chưa hiểu rõ câu hỏi.
-            // Khi đó, tiếp tục gọi Gemini để tạo câu trả lời/ câu hỏi làm rõ cho người dùng (không lộ chi tiết kỹ thuật).
-            if (string.Equals(sql, "INVALID", StringComparison.OrdinalIgnoreCase))
+            // Trường hợp AI trả về INVALID hoặc không trả về một câu SELECT hợp lệ:
+            // -> Hỏi người dùng làm rõ (không lộ chi tiết kỹ thuật) để người dùng cập nhật yêu cầu.
+            if (string.Equals(sql, "INVALID", StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(sql)
+                || !sql.TrimStart().StartsWith("select", StringComparison.OrdinalIgnoreCase))
             {
                 var clarification = await GenerateClarificationAsync(trimmedQuestion, recentMessages, cancellationToken);
 
@@ -78,23 +80,48 @@ public class TextToSqlService : ITextToSqlService
                 };
             }
 
-            if (string.IsNullOrWhiteSpace(sql) || !sql.TrimStart().StartsWith("select", StringComparison.OrdinalIgnoreCase))
+            var rowLimit = Math.Clamp(request.MaxRows ?? _options.MaxRows, 1, 200);
+
+            QueryResult queryResult;
+            try
             {
+                queryResult = await ExecuteQueryAsync(sql, rowLimit, cancellationToken);
+            }
+            catch (InvalidOperationException iex)
+            {
+                // Những lỗi cấu hình (ví dụ: thiếu connection string) là lỗi backend thật sự,
+                // trả về lỗi để dev/ops xử lý.
+                _logger.LogError(iex, "Text-to-SQL configuration error");
                 return new ApiResponse<TextToSqlResponse>
                 {
                     Success = false,
-                    Message = "AI không trả về câu lệnh SELECT hợp lệ.",
+                    Message = "Không thể xử lý truy vấn do lỗi cấu hình server.",
+                    Errors = new List<string> { iex.Message }
+                };
+            }
+            catch (Exception ex)
+            {
+                // Nếu thực thi SQL thất bại (ví dụ lỗi cú pháp, runtime), không trả về lỗi kỹ thuật cho người dùng.
+                // Thay vào đó, yêu cầu người dùng làm rõ yêu cầu để model tạo lại câu SELECT an toàn.
+                _logger.LogWarning(ex, "Text-to-SQL execution failed, asking for clarification");
+                var clarification = await GenerateClarificationAsync(trimmedQuestion, recentMessages, cancellationToken);
+
+                return new ApiResponse<TextToSqlResponse>
+                {
+                    Success = true,
+                    Message = "AI cần người dùng làm rõ thêm câu hỏi (lỗi khi thực thi SQL).",
                     Data = new TextToSqlResponse
                     {
                         Question = trimmedQuestion,
-                        SqlQuery = sql
-                    },
-                    Errors = new List<string> { "Invalid SQL generated." }
+                        SqlQuery = null,
+                        Answer = clarification,
+                        RowCount = 0,
+                        Rows = new List<Dictionary<string, object?>>(),
+                        DataPreview = null
+                    }
                 };
             }
 
-            var rowLimit = Math.Clamp(request.MaxRows ?? _options.MaxRows, 1, 200);
-            var queryResult = await ExecuteQueryAsync(sql, rowLimit, cancellationToken);
             var tablePreview = BuildTablePreview(queryResult.Rows);
 
             var answer = await GenerateAnswerFromDataAsync(
