@@ -162,39 +162,15 @@ public static class SeedData
             var rolePermissions = new List<RolePermission>();
                 
                 // SALES_EMPLOYEE (RoleId = 2) - Nhân viên bán hàng
-            // Đọc: Category, Book, Publisher, Author, Purchase Order, Goods Receipt, Order, Customer, Cart, Payment, Invoice, Promotion, Return, Price Change, Report
-            rolePermissions.AddRange(new[]
+            // Có tất cả quyền như ADMIN trừ: WRITE_EMPLOYEE (35), READ_ROLE (40), WRITE_ROLE (41), ASSIGN_PERMISSION (42)
+            // Tất cả permissions từ 1 đến 42, trừ 35, 40, 41, 42
+            for (int permId = 1; permId <= 42; permId++)
             {
-                new RolePermission { RoleId = 2, PermissionId = 1 },  // READ_CATEGORY
-                new RolePermission { RoleId = 2, PermissionId = 3 },  // READ_BOOK
-                new RolePermission { RoleId = 2, PermissionId = 5 },  // READ_PUBLISHER
-                new RolePermission { RoleId = 2, PermissionId = 7 },  // READ_AUTHOR
-                new RolePermission { RoleId = 2, PermissionId = 9 },  // READ_PURCHASE_ORDER
-                new RolePermission { RoleId = 2, PermissionId = 11 }, // READ_GOODS_RECEIPT
-                new RolePermission { RoleId = 2, PermissionId = 13 }, // READ_ORDER
-                new RolePermission { RoleId = 2, PermissionId = 17 }, // READ_CUSTOMER
-                new RolePermission { RoleId = 2, PermissionId = 19 }, // READ_CART
-                new RolePermission { RoleId = 2, PermissionId = 21 }, // READ_PAYMENT
-                new RolePermission { RoleId = 2, PermissionId = 23 }, // READ_INVOICE
-                new RolePermission { RoleId = 2, PermissionId = 25 }, // READ_PROMOTION
-                new RolePermission { RoleId = 2, PermissionId = 27 }, // READ_RETURN
-                new RolePermission { RoleId = 2, PermissionId = 29 }, // READ_PRICE_CHANGE
-                new RolePermission { RoleId = 2, PermissionId = 33 }, // READ_REPORT
-                new RolePermission { RoleId = 2, PermissionId = 38 }, // READ_AREA
-            });
-            
-            // Ghi: Order, Cart, Payment, Invoice, Promotion, Return, Price Change
-            rolePermissions.AddRange(new[]
-            {
-                new RolePermission { RoleId = 2, PermissionId = 14 }, // WRITE_ORDER
-                new RolePermission { RoleId = 2, PermissionId = 15 }, // APPROVE_ORDER
-                new RolePermission { RoleId = 2, PermissionId = 20 }, // WRITE_CART
-                new RolePermission { RoleId = 2, PermissionId = 22 }, // WRITE_PAYMENT
-                new RolePermission { RoleId = 2, PermissionId = 24 }, // WRITE_INVOICE
-                new RolePermission { RoleId = 2, PermissionId = 26 }, // WRITE_PROMOTION
-                new RolePermission { RoleId = 2, PermissionId = 28 }, // WRITE_RETURN
-                new RolePermission { RoleId = 2, PermissionId = 30 }, // WRITE_PRICE_CHANGE
-            });
+                if (permId != 35 && permId != 40 && permId != 41 && permId != 42)
+                {
+                    rolePermissions.Add(new RolePermission { RoleId = 2, PermissionId = permId });
+                }
+            }
                 
                 // DELIVERY_EMPLOYEE (RoleId = 3) - Nhân viên giao hàng
             // Đọc: Category, Book, Order, Customer, Area

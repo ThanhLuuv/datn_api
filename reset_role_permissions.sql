@@ -116,33 +116,14 @@ INSERT INTO `role_permission` (`role_id`, `permission_id`) VALUES
 (3, 41), (3, 42);
 
 -- 4.2. SALES_EMPLOYEE (RoleId = 2) - Nhân viên bán hàng
+-- Có tất cả quyền như ADMIN trừ: WRITE_EMPLOYEE (35), READ_ROLE (40), WRITE_ROLE (41), ASSIGN_PERMISSION (42)
 INSERT INTO `role_permission` (`role_id`, `permission_id`) VALUES
--- Đọc: Category, Book, Publisher, Author, Purchase Order, Goods Receipt, Order, Customer, Cart, Payment, Invoice, Promotion, Return, Price Change, Report, Area
-(2, 1),  -- READ_CATEGORY
-(2, 3),  -- READ_BOOK
-(2, 5),  -- READ_PUBLISHER
-(2, 7),  -- READ_AUTHOR
-(2, 9),  -- READ_PURCHASE_ORDER
-(2, 11), -- READ_GOODS_RECEIPT
-(2, 13), -- READ_ORDER
-(2, 17), -- READ_CUSTOMER
-(2, 19), -- READ_CART
-(2, 21), -- READ_PAYMENT
-(2, 23), -- READ_INVOICE
-(2, 25), -- READ_PROMOTION
-(2, 27), -- READ_RETURN
-(2, 29), -- READ_PRICE_CHANGE
-(2, 33), -- READ_REPORT
-(2, 38), -- READ_AREA
--- Ghi: Order, Cart, Payment, Invoice, Promotion, Return, Price Change
-(2, 14), -- WRITE_ORDER
-(2, 15), -- APPROVE_ORDER
-(2, 20), -- WRITE_CART
-(2, 22), -- WRITE_PAYMENT
-(2, 24), -- WRITE_INVOICE
-(2, 26), -- WRITE_PROMOTION
-(2, 28), -- WRITE_RETURN
-(2, 30); -- WRITE_PRICE_CHANGE
+-- Tất cả permissions từ 1 đến 42, trừ 35, 40, 41, 42
+(2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (2, 10),
+(2, 11), (2, 12), (2, 13), (2, 14), (2, 15), (2, 16), (2, 17), (2, 18), (2, 19), (2, 20),
+(2, 21), (2, 22), (2, 23), (2, 24), (2, 25), (2, 26), (2, 27), (2, 28), (2, 29), (2, 30),
+(2, 31), (2, 32), (2, 33), (2, 34), (2, 36), (2, 37), (2, 38), (2, 39);
+-- Không có: 35 (WRITE_EMPLOYEE), 40 (READ_ROLE), 41 (WRITE_ROLE), 42 (ASSIGN_PERMISSION)
 
 -- 4.3. DELIVERY_EMPLOYEE (RoleId = 4) - Nhân viên giao hàng
 INSERT INTO `role_permission` (`role_id`, `permission_id`) VALUES
@@ -185,7 +166,7 @@ ORDER BY r.role_id;
 -- ============================================
 -- Kết quả mong đợi:
 -- role_id = 1 (CUSTOMER): 11 permissions
--- role_id = 2 (SALES_EMPLOYEE): 24 permissions
+-- role_id = 2 (SALES_EMPLOYEE): 38 permissions (tất cả trừ WRITE_EMPLOYEE, READ_ROLE, WRITE_ROLE, ASSIGN_PERMISSION)
 -- role_id = 3 (ADMIN): 42 permissions
 -- role_id = 4 (DELIVERY_EMPLOYEE): 7 permissions
 -- ============================================

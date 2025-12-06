@@ -2441,6 +2441,12 @@ Trả về đúng JSON theo cấu trúc:
         using (doc)
         {
             var text = _geminiClient.ExtractFirstTextFromResponse(doc);
+            // Log raw response text for debugging market-price lookups
+            try
+            {
+                _logger.LogInformation("MarketPriceLookup - raw text: {Text}", text ?? string.Empty);
+            }
+            catch { }
             if (string.IsNullOrWhiteSpace(text))
             {
                 return new Dictionary<string, MarketPriceInfo>(StringComparer.OrdinalIgnoreCase);
@@ -2487,6 +2493,13 @@ Trả về đúng JSON theo cấu trúc:
                         sourceName,
                         sourceUrl);
                 }
+
+                // Log parsed result keys for easier debugging
+                try
+                {
+                    _logger.LogInformation("MarketPriceLookup - parsed {Count} items: {Keys}", result.Count, string.Join(',', result.Keys));
+                }
+                catch { }
 
                 return result;
             }
