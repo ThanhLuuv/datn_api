@@ -162,11 +162,11 @@ public static class SeedData
             var rolePermissions = new List<RolePermission>();
                 
                 // SALES_EMPLOYEE (RoleId = 2) - Nhân viên bán hàng
-            // Có tất cả quyền như ADMIN trừ: WRITE_EMPLOYEE (35), READ_ROLE (40), WRITE_ROLE (41), ASSIGN_PERMISSION (42)
-            // Tất cả permissions từ 1 đến 42, trừ 35, 40, 41, 42
+            // Có tất cả quyền như ADMIN trừ: READ_EMPLOYEE (34), WRITE_EMPLOYEE (35), READ_ROLE (40), WRITE_ROLE (41), ASSIGN_PERMISSION (42)
+            // Tất cả permissions từ 1 đến 42, trừ 34, 35, 40, 41, 42 (quản lý nhân viên và quyền)
             for (int permId = 1; permId <= 42; permId++)
             {
-                if (permId != 35 && permId != 40 && permId != 41 && permId != 42)
+                if (permId != 34 && permId != 35 && permId != 40 && permId != 41 && permId != 42)
                 {
                     rolePermissions.Add(new RolePermission { RoleId = 2, PermissionId = permId });
                 }

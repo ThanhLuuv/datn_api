@@ -8,7 +8,7 @@ namespace BookStore.Api.Controllers;
 
 [ApiController]
 [Route("api/admin")] 
-[Authorize(Roles = "ADMIN")]
+[Authorize(Roles = "ADMIN,SALES_EMPLOYEE")]
 public class AdminController : ControllerBase
 {
 	private readonly BookStoreDbContext _context;
