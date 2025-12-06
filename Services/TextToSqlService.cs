@@ -177,20 +177,20 @@ public class TextToSqlService : ITextToSqlService
         var today = DateTime.UtcNow.Date.ToString("yyyy-MM-dd");
 
         var systemPrompt = $"""
-Bạn là chuyên gia SQL MySQL.
-Nhiệm vụ của bạn: dựa trên lịch sử hội thoại gần nhất và schema dưới đây để tạo ra đúng MỘT câu lệnh SELECT trả lời cho câu hỏi hiện tại:
-{_options.DbSchema}
+        Bạn là chuyên gia SQL MySQL.
+        Nhiệm vụ của bạn: dựa trên lịch sử hội thoại gần nhất và schema dưới đây để tạo ra đúng MỘT câu lệnh SELECT trả lời cho câu hỏi hiện tại:
+        {_options.DbSchema}
 
-Thông tin ngữ cảnh thời gian:
-- Hôm nay (ngày hệ thống, theo UTC) là: {today}.
-- Khi người dùng nói "hôm nay", "hôm qua", "tuần này", "tháng này", hãy hiểu tương đối dựa trên ngày hôm nay và ưu tiên dùng các hàm thời gian của MySQL như CURDATE(), NOW(), WEEK(), MONTH()... thay vì hard-code các ngày cố định trong quá khứ.
+        Thông tin ngữ cảnh thời gian:
+        - Hôm nay (ngày hệ thống, theo UTC) là: {today}.
+        - Khi người dùng nói "hôm nay", "hôm qua", "tuần này", "tháng này", hãy hiểu tương đối dựa trên ngày hôm nay và ưu tiên dùng các hàm thời gian của MySQL như CURDATE(), NOW(), WEEK(), MONTH()... thay vì hard-code các ngày cố định trong quá khứ.
 
-Nguyên tắc:
-- Luôn đọc và hiểu các tin nhắn trước đó để giải nghĩa các đại từ như "người đó", "khách này", "đơn kia"… 
-- Chỉ dùng câu lệnh SELECT (kèm JOIN/WHERE/GROUP BY/ORDER BY/LIMIT nếu cần). Tuyệt đối không dùng các lệnh ghi dữ liệu (UPDATE/DELETE/INSERT/DROP/ALTER...).
-- Chỉ trả về đúng nội dung câu SQL ở dạng text thuần (không markdown, không ```).
-- Nếu câu hỏi nằm ngoài phạm vi dữ liệu của schema (ví dụ hỏi thời tiết, bóng đá, tin tức...), khi đó mới trả về đúng chuỗi: INVALID.
-""";
+        Nguyên tắc:
+        - Luôn đọc và hiểu các tin nhắn trước đó để giải nghĩa các đại từ như "người đó", "khách này", "đơn kia"… 
+        - Chỉ dùng câu lệnh SELECT (kèm JOIN/WHERE/GROUP BY/ORDER BY/LIMIT nếu cần). Tuyệt đối không dùng các lệnh ghi dữ liệu (UPDATE/DELETE/INSERT/DROP/ALTER...).
+        - Chỉ trả về đúng nội dung câu SQL ở dạng text thuần (không markdown, không ```).
+        - Nếu câu hỏi nằm ngoài phạm vi dữ liệu của schema (ví dụ hỏi thời tiết, bóng đá, tin tức...), khi đó mới trả về đúng chuỗi: INVALID.
+        """;
 
         var userPayload = JsonSerializer.Serialize(new
         {

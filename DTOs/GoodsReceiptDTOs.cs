@@ -41,6 +41,10 @@ public class CreateGoodsReceiptDto
 
 public class CreateGoodsReceiptLineDto
 {
+    [Required(ErrorMessage = "ISBN là bắt buộc")]
+    [MaxLength(20, ErrorMessage = "ISBN không vượt quá 20 ký tự")]
+    public string Isbn { get; set; } = string.Empty;
+
     [Required(ErrorMessage = "Số lượng nhập là bắt buộc")]
     [Range(1, int.MaxValue, ErrorMessage = "Số lượng nhập phải lớn hơn 0")]
     public int QtyReceived { get; set; }
@@ -62,6 +66,10 @@ public class UpdateGoodsReceiptDto
 
 public class UpdateGoodsReceiptLineDto
 {
+    [Required(ErrorMessage = "ISBN là bắt buộc")]
+    [MaxLength(20, ErrorMessage = "ISBN không vượt quá 20 ký tự")]
+    public string Isbn { get; set; } = string.Empty;
+
     [Required(ErrorMessage = "Số lượng nhập là bắt buộc")]
     [Range(1, int.MaxValue, ErrorMessage = "Số lượng nhập phải lớn hơn 0")]
     public int QtyReceived { get; set; }

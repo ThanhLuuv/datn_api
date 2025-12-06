@@ -286,6 +286,13 @@ public class BookStoreDbContext : DbContext
             .HasForeignKey(grl => grl.GrId)
             .HasConstraintName("fk_grl_gr");
 
+        // GoodsReceiptLine -> Book (by ISBN)
+        modelBuilder.Entity<GoodsReceiptLine>()
+            .HasOne(grl => grl.Book)
+            .WithMany()
+            .HasForeignKey(grl => grl.Isbn)
+            .HasConstraintName("fk_grl_book");
+
         // Configure Role-Permission many-to-many
         modelBuilder.Entity<RolePermission>()
             .HasKey(rp => new { rp.RoleId, rp.PermissionId });

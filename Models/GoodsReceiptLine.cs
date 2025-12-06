@@ -15,6 +15,11 @@ public class GoodsReceiptLine
     public long GrId { get; set; }
 
     [Required]
+    [MaxLength(20)]
+    [Column("isbn")]
+    public string Isbn { get; set; } = string.Empty;
+
+    [Required]
     [Column("qty_received")]
     public int QtyReceived { get; set; }
 
@@ -25,6 +30,9 @@ public class GoodsReceiptLine
     // Navigation properties
     [ForeignKey("GrId")]
     public virtual GoodsReceipt GoodsReceipt { get; set; } = null!;
+
+    [ForeignKey("Isbn")]
+    public virtual Book? Book { get; set; }
 
     // Computed property
     [NotMapped]

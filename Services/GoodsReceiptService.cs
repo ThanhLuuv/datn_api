@@ -23,6 +23,7 @@ public class GoodsReceiptService : IGoodsReceiptService
                     .ThenInclude(po => po.Publisher)
                 .Include(gr => gr.CreatedByEmployee)
                 .Include(gr => gr.GoodsReceiptLines)
+                    .ThenInclude(grl => grl.Book)
                 .AsQueryable();
 
             // Apply search filters
@@ -81,31 +82,15 @@ public class GoodsReceiptService : IGoodsReceiptService
                     Lines = gr.GoodsReceiptLines.Select(grl => new GoodsReceiptLineDto
                     {
                         GrLineId = grl.GrLineId,
-                        Isbn = "", // Will be loaded from purchase order lines
-                        BookTitle = "", // Will be loaded from purchase order lines
+                        Isbn = grl.Isbn,
+                        BookTitle = grl.Book != null ? grl.Book.Title : string.Empty,
                         QtyReceived = grl.QtyReceived,
                         UnitCost = grl.UnitCost,
                         LineTotal = grl.QtyReceived * grl.UnitCost
                     }).ToList()
                 })
                 .ToListAsync();
-
-            // Load book information from purchase order lines
-            foreach (var goodsReceipt in goodsReceipts)
-            {
-                var purchaseOrderLines = await _context.PurchaseOrderLines
-                    .Include(pol => pol.Book)
-                    .Where(pol => pol.PoId == goodsReceipt.PoId)
-                    .ToListAsync();
-
-                for (int i = 0; i < goodsReceipt.Lines.Count && i < purchaseOrderLines.Count; i++)
-                {
-                    var line = goodsReceipt.Lines[i];
-                    var poLine = purchaseOrderLines[i];
-                    line.Isbn = poLine.Isbn;
-                    line.BookTitle = poLine.Book.Title;
-                }
-            }
+            // Lines already include Book (via EF navigation) so no post-mapping required
 
             var response = new GoodsReceiptListResponse
             {
@@ -143,6 +128,7 @@ public class GoodsReceiptService : IGoodsReceiptService
                     .ThenInclude(po => po.Publisher)
                 .Include(gr => gr.CreatedByEmployee)
                 .Include(gr => gr.GoodsReceiptLines)
+                    .ThenInclude(grl => grl.Book)
                 .Where(gr => gr.GrId == grId)
                 .Select(gr => new GoodsReceiptDto
                 {
@@ -158,8 +144,8 @@ public class GoodsReceiptService : IGoodsReceiptService
                     Lines = gr.GoodsReceiptLines.Select(grl => new GoodsReceiptLineDto
                     {
                         GrLineId = grl.GrLineId,
-                        Isbn = "", // Will be loaded from purchase order lines
-                        BookTitle = "", // Will be loaded from purchase order lines
+                        Isbn = grl.Isbn,
+                        BookTitle = grl.Book != null ? grl.Book.Title : string.Empty,
                         QtyReceived = grl.QtyReceived,
                         UnitCost = grl.UnitCost,
                         LineTotal = grl.QtyReceived * grl.UnitCost
@@ -177,19 +163,7 @@ public class GoodsReceiptService : IGoodsReceiptService
                 };
             }
 
-            // Load book information from purchase order lines
-            var purchaseOrderLines = await _context.PurchaseOrderLines
-                .Include(pol => pol.Book)
-                .Where(pol => pol.PoId == goodsReceipt.PoId)
-                .ToListAsync();
-
-            for (int i = 0; i < goodsReceipt.Lines.Count && i < purchaseOrderLines.Count; i++)
-            {
-                var line = goodsReceipt.Lines[i];
-                var poLine = purchaseOrderLines[i];
-                line.Isbn = poLine.Isbn;
-                line.BookTitle = poLine.Book.Title;
-            }
+            // Lines already populated with ISBN and Book via EF navigation
 
             return new ApiResponse<GoodsReceiptDto>
             {
@@ -256,18 +230,18 @@ public class GoodsReceiptService : IGoodsReceiptService
                 };
             }
 
-            // Validate books exist in purchase order
-            var purchaseOrderLines = await _context.PurchaseOrderLines
-                .Where(pol => pol.PoId == createGoodsReceiptDto.PoId)
-                .ToListAsync();
+            // Validate books (ISBNs) match purchase order lines
+            var purchaseOrderLines = purchaseOrder.PurchaseOrderLines.ToList();
+            var poIsbns = purchaseOrderLines.Select(p => p.Isbn).ToHashSet();
+            var createIsbns = createGoodsReceiptDto.Lines.Select(l => l.Isbn).ToHashSet();
 
-            if (purchaseOrderLines.Count != createGoodsReceiptDto.Lines.Count)
+            if (!poIsbns.SetEquals(createIsbns))
             {
                 return new ApiResponse<GoodsReceiptDto>
                 {
                     Success = false,
-                    Message = "Số lượng dòng không khớp",
-                    Errors = new List<string> { "Số lượng dòng trong phiếu nhập phải khớp với số lượng dòng trong đơn đặt mua" }
+                    Message = "Dòng ISBN trong phiếu nhập không khớp với đơn đặt mua",
+                    Errors = new List<string> { "Danh sách ISBN trong phiếu nhập phải khớp với đơn đặt mua" }
                 };
             }
 
@@ -282,25 +256,38 @@ public class GoodsReceiptService : IGoodsReceiptService
             _context.GoodsReceipts.Add(goodsReceipt);
             await _context.SaveChangesAsync();
 
-            // Add goods receipt lines and update stock by ordered lines order
-            var poLines = purchaseOrder.PurchaseOrderLines.OrderBy(l => l.PoLineId).ToList();
+            // Add goods receipt lines and update stock by ISBN
             var affectedIsbns = new HashSet<string>();
-            for (int i = 0; i < createGoodsReceiptDto.Lines.Count && i < poLines.Count; i++)
+            foreach (var lineDto in createGoodsReceiptDto.Lines)
             {
-                var lineDto = createGoodsReceiptDto.Lines[i];
-                var poLine = poLines[i];
                 var goodsReceiptLine = new GoodsReceiptLine
                 {
                     GrId = goodsReceipt.GrId,
+                    Isbn = lineDto.Isbn,
                     QtyReceived = lineDto.QtyReceived,
                     UnitCost = lineDto.UnitCost
                 };
                 _context.GoodsReceiptLines.Add(goodsReceiptLine);
 
                 // Update book stock
-                var book = poLine.Book;
+                var poLine = purchaseOrderLines.FirstOrDefault(p => p.Isbn == lineDto.Isbn);
+                Book? book = poLine?.Book;
+                if (book == null)
+                {
+                    // Try to fetch book if not loaded
+                    book = await _context.Books.FindAsync(lineDto.Isbn);
+                }
+                if (book == null)
+                {
+                    return new ApiResponse<GoodsReceiptDto>
+                    {
+                        Success = false,
+                        Message = $"Sách với ISBN {lineDto.Isbn} không tồn tại",
+                        Errors = new List<string> { $"ISBN {lineDto.Isbn} không tồn tại" }
+                    };
+                }
                 book.Stock += lineDto.QtyReceived;
-                affectedIsbns.Add(poLine.Isbn);
+                affectedIsbns.Add(lineDto.Isbn);
             }
             await _context.SaveChangesAsync();
 
@@ -308,12 +295,13 @@ public class GoodsReceiptService : IGoodsReceiptService
             purchaseOrder.StatusId = 4;
             await _context.SaveChangesAsync();
 
-            // Load the created goods receipt with related data
+            // Load the created goods receipt with related data (including Book via GoodsReceiptLine)
             var createdGoodsReceipt = await _context.GoodsReceipts
                 .Include(gr => gr.PurchaseOrder)
                     .ThenInclude(po => po.Publisher)
                 .Include(gr => gr.CreatedByEmployee)
                 .Include(gr => gr.GoodsReceiptLines)
+                    .ThenInclude(grl => grl.Book)
                 .Where(gr => gr.GrId == goodsReceipt.GrId)
                 .Select(gr => new GoodsReceiptDto
                 {
@@ -329,28 +317,14 @@ public class GoodsReceiptService : IGoodsReceiptService
                     Lines = gr.GoodsReceiptLines.Select(grl => new GoodsReceiptLineDto
                     {
                         GrLineId = grl.GrLineId,
-                        Isbn = "", // Will be loaded from purchase order lines
-                        BookTitle = "", // Will be loaded from purchase order lines
+                        Isbn = grl.Isbn,
+                        BookTitle = grl.Book != null ? grl.Book.Title : string.Empty,
                         QtyReceived = grl.QtyReceived,
                         UnitCost = grl.UnitCost,
                         LineTotal = grl.QtyReceived * grl.UnitCost
                     }).ToList()
                 })
                 .FirstAsync();
-
-            // Load book information from purchase order lines
-            var createdPurchaseOrderLines = await _context.PurchaseOrderLines
-                .Include(pol => pol.Book)
-                .Where(pol => pol.PoId == createdGoodsReceipt.PoId)
-                .ToListAsync();
-
-            for (int i = 0; i < createdGoodsReceipt.Lines.Count && i < createdPurchaseOrderLines.Count; i++)
-            {
-                var line = createdGoodsReceipt.Lines[i];
-                var poLine = createdPurchaseOrderLines[i];
-                line.Isbn = poLine.Isbn;
-                line.BookTitle = poLine.Book.Title;
-            }
 
             // Recompute average price for affected ISBNs (after stock and receipts saved)
             foreach (var isbn in affectedIsbns)
@@ -409,47 +383,60 @@ public class GoodsReceiptService : IGoodsReceiptService
                 };
             }
 
-            if (purchaseOrder.PurchaseOrderLines.Count != updateGoodsReceiptDto.Lines.Count)
+            var poIsbns2 = purchaseOrder.PurchaseOrderLines.Select(p => p.Isbn).ToHashSet();
+            var updateIsbns = updateGoodsReceiptDto.Lines.Select(l => l.Isbn).ToHashSet();
+            if (!poIsbns2.SetEquals(updateIsbns))
             {
                 return new ApiResponse<GoodsReceiptDto>
                 {
                     Success = false,
-                    Message = "Số lượng dòng không khớp",
-                    Errors = new List<string> { "Số lượng dòng trong phiếu nhập phải khớp với số lượng dòng trong đơn đặt mua" }
+                    Message = "Dòng ISBN trong phiếu nhập không khớp với đơn đặt mua",
+                    Errors = new List<string> { "Danh sách ISBN trong phiếu nhập phải khớp với đơn đặt mua" }
                 };
             }
 
             // Recalculate stock adjustments: remove old, add new
-            // To do this accurately we need the related purchase order lines
-            var poId = goodsReceipt.PoId;
-            var poLines = await _context.PurchaseOrderLines
-                .Include(pl => pl.Book)
-                .Where(pl => pl.PoId == poId)
-                .OrderBy(pl => pl.PoLineId)
-                .ToListAsync();
+            var poLines = purchaseOrder.PurchaseOrderLines.ToList();
             var affectedIsbns2 = new HashSet<string>(poLines.Select(pl => pl.Isbn));
 
-            // Rollback previous receipt quantities from stock
+            // Rollback previous receipt quantities from stock (use ISBN on previous lines)
             var oldLines = await _context.GoodsReceiptLines.Where(l => l.GrId == grId).ToListAsync();
-            for (int i = 0; i < oldLines.Count && i < poLines.Count; i++)
+            foreach (var oldLine in oldLines)
             {
-                poLines[i].Book.Stock -= oldLines[i].QtyReceived;
+                var oldBook = await _context.Books.FindAsync(oldLine.Isbn);
+                if (oldBook != null)
+                {
+                    oldBook.Stock -= oldLine.QtyReceived;
+                }
+                affectedIsbns2.Add(oldLine.Isbn);
             }
             // Remove old lines
             _context.GoodsReceiptLines.RemoveRange(oldLines);
 
-            // Add new lines and apply stock
-            for (int i = 0; i < updateGoodsReceiptDto.Lines.Count && i < poLines.Count; i++)
+            // Add new lines and apply stock by ISBN
+            foreach (var lineDto in updateGoodsReceiptDto.Lines)
             {
-                var lineDto = updateGoodsReceiptDto.Lines[i];
                 var newLine = new GoodsReceiptLine
                 {
                     GrId = goodsReceipt.GrId,
+                    Isbn = lineDto.Isbn,
                     QtyReceived = lineDto.QtyReceived,
                     UnitCost = lineDto.UnitCost
                 };
                 _context.GoodsReceiptLines.Add(newLine);
-                poLines[i].Book.Stock += lineDto.QtyReceived;
+
+                var bookToAdd = await _context.Books.FindAsync(lineDto.Isbn);
+                if (bookToAdd == null)
+                {
+                    return new ApiResponse<GoodsReceiptDto>
+                    {
+                        Success = false,
+                        Message = $"Sách với ISBN {lineDto.Isbn} không tồn tại",
+                        Errors = new List<string> { $"ISBN {lineDto.Isbn} không tồn tại" }
+                    };
+                }
+                bookToAdd.Stock += lineDto.QtyReceived;
+                affectedIsbns2.Add(lineDto.Isbn);
             }
 
             goodsReceipt.Note = updateGoodsReceiptDto.Note;
@@ -463,12 +450,13 @@ public class GoodsReceiptService : IGoodsReceiptService
                 await _context.SaveChangesAsync();
             }
 
-            // Load the updated goods receipt with related data
+            // Load the updated goods receipt with related data (include Book via GoodsReceiptLine)
             var updatedGoodsReceipt = await _context.GoodsReceipts
                 .Include(gr => gr.PurchaseOrder)
                     .ThenInclude(po => po.Publisher)
                 .Include(gr => gr.CreatedByEmployee)
                 .Include(gr => gr.GoodsReceiptLines)
+                    .ThenInclude(grl => grl.Book)
                 .Where(gr => gr.GrId == grId)
                 .Select(gr => new GoodsReceiptDto
                 {
@@ -484,28 +472,14 @@ public class GoodsReceiptService : IGoodsReceiptService
                     Lines = gr.GoodsReceiptLines.Select(grl => new GoodsReceiptLineDto
                     {
                         GrLineId = grl.GrLineId,
-                        Isbn = "", // Will be loaded from purchase order lines
-                        BookTitle = "", // Will be loaded from purchase order lines
+                        Isbn = grl.Isbn,
+                        BookTitle = grl.Book != null ? grl.Book.Title : string.Empty,
                         QtyReceived = grl.QtyReceived,
                         UnitCost = grl.UnitCost,
                         LineTotal = grl.QtyReceived * grl.UnitCost
                     }).ToList()
                 })
                 .FirstAsync();
-
-            // Load book information from purchase order lines
-            var updatedPurchaseOrderLines = await _context.PurchaseOrderLines
-                .Include(pol => pol.Book)
-                .Where(pol => pol.PoId == updatedGoodsReceipt.PoId)
-                .ToListAsync();
-
-            for (int i = 0; i < updatedGoodsReceipt.Lines.Count && i < updatedPurchaseOrderLines.Count; i++)
-            {
-                var line = updatedGoodsReceipt.Lines[i];
-                var poLine = updatedPurchaseOrderLines[i];
-                line.Isbn = poLine.Isbn;
-                line.BookTitle = poLine.Book.Title;
-            }
 
             // Recompute average price for affected ISBNs after update
             foreach (var isbn in affectedIsbns2)
