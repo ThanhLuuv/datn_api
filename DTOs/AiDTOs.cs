@@ -362,6 +362,27 @@ public class AiSearchReindexResponse
     public DateTime IndexedAt { get; set; } = DateTime.UtcNow;
 }
 
+public class MarketPriceLookupRequest
+{
+    /// <summary>
+    /// Danh sách tên sách muốn tra cứu giá (tối đa 10 mục được xử lý).
+    /// </summary>
+    public List<string>? Titles { get; set; }
+}
+
+public class MarketPriceItemDto
+{
+    public string Title { get; set; } = string.Empty;
+    public string? MarketPrice { get; set; }
+    public string? SourceName { get; set; }
+    public string? SourceUrl { get; set; }
+}
+
+public class MarketPriceLookupResponse
+{
+    public List<MarketPriceItemDto> Items { get; set; } = new();
+}
+
 public class TextToSqlRequest
 {
     [Required]

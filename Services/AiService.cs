@@ -656,41 +656,21 @@ Dạng JSON bắt buộc:
 
         if (response.BookSuggestions.Count > 0)
         {
-            // Chỉ enrich & tra cứu giá thị trường cho sách mới (isbn rỗng).
-            // Các sách cũ đang có trong kho đã có đủ dữ liệu nội bộ nên không cần gọi search ngoài.
+            // Chỉ enrich cho sách mới (isbn rỗng). Không tự động gọi tra cứu giá thị trường ở đây.
+            // Việc tra cứu giá thị trường được tách ra thành API riêng `GetMarketPriceInsightsAsync`.
             var newBookSuggestions = response.BookSuggestions
                 .Where(s => string.IsNullOrWhiteSpace(s.Isbn))
                 .ToList();
 
             if (newBookSuggestions.Count > 0)
             {
-                var enrichTask = EnrichBookSuggestionsAsync(newBookSuggestions, cancellationToken);
-                var priceTask = FetchMarketPriceInsightsAsync(
-                    newBookSuggestions.Select(s => s.Title),
-                    cancellationToken);
+                await EnrichBookSuggestionsAsync(newBookSuggestions, cancellationToken);
 
-                await Task.WhenAll(enrichTask, priceTask);
-
-                var priceMap = priceTask.Result;
-
+                // Sau khi enrich, đảm bảo mỗi suggestion có ISBN và SuggestedPrice nếu có thể
                 foreach (var suggestion in newBookSuggestions)
                 {
-                    var key = NormalizeTitleKey(suggestion.Title);
-                    if (!string.IsNullOrEmpty(key) && priceMap.TryGetValue(key, out var priceInfo))
-                    {
-                        suggestion.MarketPrice = string.IsNullOrWhiteSpace(priceInfo.MarketPrice)
-                            ? suggestion.MarketPrice
-                            : priceInfo.MarketPrice;
-                        suggestion.MarketSourceName = string.IsNullOrWhiteSpace(priceInfo.SourceName)
-                            ? suggestion.MarketSourceName
-                            : priceInfo.SourceName;
-                        suggestion.MarketSourceUrl = string.IsNullOrWhiteSpace(priceInfo.SourceUrl)
-                            ? suggestion.MarketSourceUrl
-                            : priceInfo.SourceUrl;
-                    }
-
-                    suggestion.SuggestedPrice ??= TryParseVndPrice(suggestion.MarketPrice);
                     suggestion.SuggestedIsbn ??= await GenerateUniqueIsbnAsync(null, cancellationToken);
+                    suggestion.SuggestedPrice ??= TryParseVndPrice(suggestion.MarketPrice);
                 }
             }
         }
@@ -2530,6 +2510,32 @@ Trả về đúng JSON theo cấu trúc:
 
 
     private sealed record MarketPriceInfo(string Title, string? MarketPrice, string? SourceName, string? SourceUrl);
+
+    // Public wrapper to expose market price lookup via IAiService
+    public async Task<ApiResponse<MarketPriceLookupResponse>> GetMarketPriceInsightsAsync(
+        MarketPriceLookupRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var titles = request?.Titles ?? new List<string>();
+        var map = await FetchMarketPriceInsightsAsync(titles, cancellationToken);
+
+        var items = map.Values
+            .Select(m => new MarketPriceItemDto
+            {
+                Title = m.Title ?? string.Empty,
+                MarketPrice = m.MarketPrice,
+                SourceName = m.SourceName,
+                SourceUrl = m.SourceUrl
+            })
+            .ToList();
+
+        return new ApiResponse<MarketPriceLookupResponse>
+        {
+            Success = true,
+            Message = "OK",
+            Data = new MarketPriceLookupResponse { Items = items }
+        };
+    }
 
     private sealed record BookSuggestionEnrichment(
         string Title,

@@ -15,6 +15,12 @@ public interface IAiService
     Task<ApiResponse<AdminAiAssistantResponse>> GetAdminInsightsAsync(AdminAiAssistantRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Lookup market price / source for a list of book titles. This is a standalone operation
+    /// and will be invoked explicitly (not automatically by admin assistant).
+    /// </summary>
+    Task<ApiResponse<MarketPriceLookupResponse>> GetMarketPriceInsightsAsync(MarketPriceLookupRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Chatbox AI dạng live cho admin: trả lời câu hỏi về doanh thu, tồn kho, đơn hàng... dựa trên dữ liệu thật.
     /// </summary>
     Task<ApiResponse<AdminAiChatResponse>> GetAdminChatAnswerAsync(AdminAiChatRequest request, CancellationToken cancellationToken = default);

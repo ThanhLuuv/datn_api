@@ -76,6 +76,34 @@ public class AiController : ControllerBase
     }
 
     /// <summary>
+    /// Tra cứu giá thị trường cho danh sách tên sách (API riêng, chỉ gọi khi cần).
+    /// </summary>
+    [HttpPost("market-price")]
+    [Authorize(Roles = "ADMIN")]
+    public async Task<ActionResult<ApiResponse<MarketPriceLookupResponse>>> MarketPrice(
+        [FromBody] MarketPriceLookupRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request?.Titles == null || request.Titles.Count == 0)
+        {
+            return BadRequest(new ApiResponse<MarketPriceLookupResponse>
+            {
+                Success = false,
+                Message = "Cần cung cấp danh sách tên sách để tra cứu",
+                Errors = new List<string> { "titles is required" }
+            });
+        }
+
+        var result = await _aiService.GetMarketPriceInsightsAsync(request, cancellationToken);
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+
+        return BadRequest(result);
+    }
+
+    /// <summary>
     /// Chatbox AI realtime cho admin (text) - trả lời các câu hỏi về doanh thu, tồn kho, đơn hàng...
     /// </summary>
     [HttpPost("admin-chat")]
