@@ -10,7 +10,7 @@ namespace BookStore.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "CUSTOMER")]
+[Authorize(Policy = "PERM_READ_CUSTOMER")]
 public class CustomerController : ControllerBase
 {
     private readonly BookStoreDbContext _db;
@@ -53,6 +53,7 @@ public class CustomerController : ControllerBase
     /// Cập nhật thông tin cá nhân của khách hàng hiện tại
     /// </summary>
     [HttpPut("me")]
+    [Authorize(Policy = "PERM_WRITE_CUSTOMER")]
     public async Task<ActionResult<ApiResponse<CustomerProfileDto>>> UpdateMyProfile([FromBody] UpdateCustomerProfileDto request)
     {
         if (!ModelState.IsValid)

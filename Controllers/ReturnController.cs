@@ -10,7 +10,7 @@ namespace BookStore.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+[Authorize(Policy = "PERM_READ_RETURN")]
 public class ReturnController : ControllerBase
 {
     private readonly IReturnService _returnService;
@@ -24,6 +24,7 @@ public class ReturnController : ControllerBase
     /// ADMIN/EMPLOYEE tạo yêu cầu trả hàng cho khách hàng
     /// </summary>
     [HttpPost]
+    [Authorize(Policy = "PERM_WRITE_RETURN")]
     public async Task<ActionResult<ApiResponse<ReturnDto>>> CreateReturn([FromBody] CreateReturnDto request)
     {
         if (!ModelState.IsValid)
@@ -63,6 +64,7 @@ public class ReturnController : ControllerBase
     /// ADMIN/EMPLOYEE cập nhật trạng thái yêu cầu trả hàng
     /// </summary>
     [HttpPut("{returnId}/status")]
+    [Authorize(Policy = "PERM_WRITE_RETURN")]
     public async Task<ActionResult<ApiResponse<ReturnDto>>> UpdateReturnStatus(
         long returnId, 
         [FromBody] UpdateReturnStatusRequest request)

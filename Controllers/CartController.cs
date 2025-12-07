@@ -8,7 +8,7 @@ namespace BookStore.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "CUSTOMER")]
+[Authorize(Policy = "PERM_READ_CART")]
 public class CartController : ControllerBase
 {
     private readonly ICartService _cartService;
@@ -66,6 +66,7 @@ public class CartController : ControllerBase
     /// Thêm sách vào giỏ hàng
     /// </summary>
     [HttpPost("add")]
+    [Authorize(Policy = "PERM_WRITE_CART")]
     public async Task<ActionResult<ApiResponse<CartItemDto>>> AddToCart([FromBody] AddToCartRequestDto request)
     {
         if (!ModelState.IsValid)
@@ -108,6 +109,7 @@ public class CartController : ControllerBase
     /// Cập nhật số lượng sách trong giỏ hàng
     /// </summary>
     [HttpPut("{cartItemId}")]
+    [Authorize(Policy = "PERM_WRITE_CART")]
     public async Task<ActionResult<ApiResponse<CartItemDto>>> UpdateCartItem(long cartItemId, [FromBody] UpdateCartItemRequestDto request)
     {
         if (!ModelState.IsValid)
@@ -150,6 +152,7 @@ public class CartController : ControllerBase
     /// Xóa một sản phẩm khỏi giỏ hàng theo cartItemId
     /// </summary>
     [HttpDelete("{cartItemId}")]
+    [Authorize(Policy = "PERM_WRITE_CART")]
     public async Task<ActionResult<ApiResponse<bool>>> RemoveFromCart(long cartItemId)
     {
         var customerId = await GetCustomerIdFromToken();
@@ -177,6 +180,7 @@ public class CartController : ControllerBase
     /// Xóa tất cả sản phẩm khỏi giỏ hàng
     /// </summary>
     [HttpDelete("clear")]
+    [Authorize(Policy = "PERM_WRITE_CART")]
     public async Task<ActionResult<ApiResponse<bool>>> ClearCart()
     {
         var customerId = await GetCustomerIdFromToken();
@@ -204,6 +208,7 @@ public class CartController : ControllerBase
     /// Xóa tất cả sản phẩm của một sách khỏi giỏ hàng theo ISBN
     /// </summary>
     [HttpDelete("book/{isbn}")]
+    [Authorize(Policy = "PERM_WRITE_CART")]
     public async Task<ActionResult<ApiResponse<bool>>> RemoveBookFromCart(string isbn)
     {
         var customerId = await GetCustomerIdFromToken();

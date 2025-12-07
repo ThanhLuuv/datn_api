@@ -8,7 +8,7 @@ namespace BookStore.Api.Controllers;
 
 [ApiController]
 [Route("api/admin")] 
-[Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+[Authorize(Policy = "PERM_READ_REPORT")]
 public class AdminController : ControllerBase
 {
 	private readonly BookStoreDbContext _context;

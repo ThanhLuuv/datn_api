@@ -21,7 +21,7 @@ public class InvoiceController : ControllerBase
     /// Lấy danh sách hóa đơn
     /// </summary>
     [HttpGet]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_INVOICE")]
     public async Task<ActionResult<ApiResponse<InvoiceListResponse>>> GetInvoices([FromQuery] InvoiceSearchRequest request)
     {
         var result = await _invoiceService.GetInvoicesAsync(request);
@@ -33,7 +33,7 @@ public class InvoiceController : ControllerBase
     /// Lấy danh sách hóa đơn chưa có phiếu trả kèm thông tin đơn hàng
     /// </summary>
     [HttpGet("with-orders")]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_INVOICE")]
     public async Task<ActionResult<ApiResponse<InvoiceWithOrderListResponse>>> GetInvoicesWithOrders([FromQuery] InvoiceSearchRequest request)
     {
         var result = await _invoiceService.GetInvoicesWithOrdersAsync(request);
@@ -45,7 +45,7 @@ public class InvoiceController : ControllerBase
     /// Lấy hóa đơn theo ID
     /// </summary>
     [HttpGet("{invoiceId}")]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_INVOICE")]
     public async Task<ActionResult<ApiResponse<InvoiceDto>>> GetInvoice(long invoiceId)
     {
         var result = await _invoiceService.GetInvoiceByIdAsync(invoiceId);
@@ -57,7 +57,7 @@ public class InvoiceController : ControllerBase
     /// Lấy hóa đơn theo Order ID
     /// </summary>
     [HttpGet("order/{orderId}")]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE,CUSTOMER")]
+    [Authorize(Policy = "PERM_READ_INVOICE")]
     public async Task<ActionResult<ApiResponse<InvoiceDto>>> GetInvoiceByOrder(long orderId)
     {
         var result = await _invoiceService.GetInvoiceByOrderIdAsync(orderId);
@@ -69,7 +69,7 @@ public class InvoiceController : ControllerBase
     /// Kiểm tra đơn hàng đã thanh toán chưa
     /// </summary>
     [HttpGet("check-payment/{orderId}")]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE,CUSTOMER")]
+    [Authorize(Policy = "PERM_READ_INVOICE")]
     public async Task<ActionResult<ApiResponse<bool>>> CheckPayment(long orderId)
     {
         var hasPaid = await _invoiceService.HasPaidInvoiceAsync(orderId);

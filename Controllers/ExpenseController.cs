@@ -21,7 +21,7 @@ public class ExpenseController : ControllerBase
     /// Tạo phiếu chi mới
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_WRITE_EXPENSE")]
     public async Task<ActionResult<ApiResponse<ExpenseVoucherDto>>> CreateExpenseVoucher([FromBody] CreateExpenseVoucherDto request)
     {
         var userId = GetCurrentUserId();
@@ -34,7 +34,7 @@ public class ExpenseController : ControllerBase
     /// Lấy danh sách phiếu chi
     /// </summary>
     [HttpGet]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_EXPENSE")]
     public async Task<ActionResult<ApiResponse<ExpenseVoucherResponse>>> GetExpenseVouchers(
         [FromQuery] int pageNumber = 1,
         [FromQuery] int pageSize = 50,
@@ -50,7 +50,7 @@ public class ExpenseController : ControllerBase
     /// Lấy thông tin phiếu chi theo ID
     /// </summary>
     [HttpGet("{expenseVoucherId}")]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_EXPENSE")]
     public async Task<ActionResult<ApiResponse<ExpenseVoucherDto>>> GetExpenseVoucherById(long expenseVoucherId)
     {
         var result = await _expenseService.GetExpenseVoucherByIdAsync(expenseVoucherId);
@@ -62,7 +62,7 @@ public class ExpenseController : ControllerBase
     /// Duyệt phiếu chi
     /// </summary>
     [HttpPost("approve")]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_EXPENSE")]
     public async Task<ActionResult<ApiResponse<ExpenseVoucherDto>>> ApproveExpenseVoucher([FromBody] ApproveExpenseVoucherDto request)
     {
         var userId = GetCurrentUserId();
@@ -75,7 +75,7 @@ public class ExpenseController : ControllerBase
     /// Từ chối phiếu chi
     /// </summary>
     [HttpPost("reject")]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_EXPENSE")]
     public async Task<ActionResult<ApiResponse<ExpenseVoucherDto>>> RejectExpenseVoucher([FromBody] RejectExpenseVoucherDto request)
     {
         var userId = GetCurrentUserId();

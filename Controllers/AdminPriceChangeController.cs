@@ -13,7 +13,7 @@ namespace BookStore.Api.Controllers;
 
 [ApiController]
 [Route("api/admin/price-changes")] 
-[Authorize]
+[Authorize(Policy = "PERM_READ_PRICE_CHANGE")]
 public class AdminPriceChangeController : ControllerBase
 {
     private readonly BookStoreDbContext _db;
@@ -57,6 +57,7 @@ public class AdminPriceChangeController : ControllerBase
 
     // POST: /api/admin/price-changes
     [HttpPost]
+    [Authorize(Policy = "PERM_WRITE_PRICE_CHANGE")]
     public async Task<IActionResult> Create([FromBody] CreatePriceChangeDto dto)
     {
         if (string.IsNullOrWhiteSpace(dto.Isbn)) return BadRequest(new { success = false, message = "isbn is required" });
@@ -91,6 +92,7 @@ public class AdminPriceChangeController : ControllerBase
 
     // PUT: /api/admin/price-changes/{isbn}/{changedAt}
     [HttpPut("{isbn}/{changedAt}")]
+    [Authorize(Policy = "PERM_WRITE_PRICE_CHANGE")]
     public async Task<IActionResult> Update([FromRoute] string isbn, [FromRoute] DateTime changedAt, [FromBody] UpdatePriceChangeDto dto)
     {
         var entity = await _db.PriceChanges.FirstOrDefaultAsync(pc => pc.Isbn == isbn && pc.ChangedAt == changedAt);
@@ -120,6 +122,7 @@ public class AdminPriceChangeController : ControllerBase
 
     // DELETE: /api/admin/price-changes/{isbn}/{changedAt}
     [HttpDelete("{isbn}/{changedAt}")]
+    [Authorize(Policy = "PERM_WRITE_PRICE_CHANGE")]
     public async Task<IActionResult> Delete([FromRoute] string isbn, [FromRoute] DateTime changedAt)
     {
         var entity = await _db.PriceChanges.FirstOrDefaultAsync(pc => pc.Isbn == isbn && pc.ChangedAt == changedAt);

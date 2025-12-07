@@ -26,7 +26,7 @@ public class PriceChangeController : ControllerBase
     /// <param name="request">Search criteria</param>
     /// <returns>List of price changes</returns>
     [HttpGet]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_PRICE_CHANGE")]
     public async Task<ActionResult<ApiResponse<PriceChangeListResponse>>> GetPriceChanges([FromQuery] PriceChangeSearchRequest request)
     {
         if (!ModelState.IsValid)
@@ -60,7 +60,7 @@ public class PriceChangeController : ControllerBase
     /// <param name="priceChangeId">Price change ID</param>
     /// <returns>Price change details</returns>
     [HttpGet("{priceChangeId}")]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_PRICE_CHANGE")]
     public async Task<ActionResult<ApiResponse<PriceChangeDto>>> GetPriceChangeById(long priceChangeId)
     {
         var result = await _priceChangeService.GetPriceChangeByIdAsync(priceChangeId);
@@ -79,7 +79,7 @@ public class PriceChangeController : ControllerBase
     /// <param name="createPriceChangeDto">Price change data</param>
     /// <returns>Created price change</returns>
     [HttpPost]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_PRICE_CHANGE")]
     public async Task<ActionResult<ApiResponse<PriceChangeDto>>> CreatePriceChange([FromBody] CreatePriceChangeDto createPriceChangeDto)
     {
         if (!ModelState.IsValid)

@@ -8,7 +8,7 @@ namespace BookStore.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "DELIVERY_EMPLOYEE,ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+[Authorize(Policy = "PERM_READ_GR")]
 public class GoodsReceiptController : ControllerBase
 {
     private readonly IGoodsReceiptService _goodsReceiptService;
@@ -60,7 +60,7 @@ public class GoodsReceiptController : ControllerBase
     /// <param name="createGoodsReceiptDto">Thông tin phiếu nhập mới</param>
     /// <returns>Thông tin phiếu nhập đã tạo</returns>
     [HttpPost]
-    [Authorize(Roles = "DELIVERY_EMPLOYEE,ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_WRITE_GR")]
     public async Task<ActionResult<ApiResponse<GoodsReceiptDto>>> CreateGoodsReceipt([FromBody] CreateGoodsReceiptDto createGoodsReceiptDto)
     {
         if (!ModelState.IsValid)
@@ -117,7 +117,7 @@ public class GoodsReceiptController : ControllerBase
     /// <param name="updateGoodsReceiptDto">Thông tin cập nhật</param>
     /// <returns>Thông tin phiếu nhập đã cập nhật</returns>
     [HttpPut("{grId}")]
-    [Authorize(Roles = "DELIVERY_EMPLOYEE,ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_WRITE_GR")]
     public async Task<ActionResult<ApiResponse<GoodsReceiptDto>>> UpdateGoodsReceipt(long grId, [FromBody] UpdateGoodsReceiptDto updateGoodsReceiptDto)
     {
         if (!ModelState.IsValid)
@@ -156,6 +156,7 @@ public class GoodsReceiptController : ControllerBase
     /// <param name="grId">ID phiếu nhập</param>
     /// <returns>Kết quả xóa</returns>
     [HttpDelete("{grId}")]
+    [Authorize(Policy = "PERM_WRITE_GR")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteGoodsReceipt(long grId)
     {
         var result = await _goodsReceiptService.DeleteGoodsReceiptAsync(grId);

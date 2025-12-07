@@ -9,7 +9,7 @@ namespace BookStore.Api.Controllers;
 
 [ApiController]
 [Route("api/customer/[controller]")]
-[Authorize(Roles = "CUSTOMER")]
+[Authorize(Policy = "PERM_READ_RETURN")]
 public class CustomerReturnController : ControllerBase
 {
     private readonly IReturnService _returnService;
@@ -27,6 +27,7 @@ public class CustomerReturnController : ControllerBase
     /// Customer tạo yêu cầu trả hàng
     /// </summary>
     [HttpPost]
+    [Authorize(Policy = "PERM_WRITE_RETURN")]
     public async Task<ActionResult<ApiResponse<ReturnDto>>> CreateReturn([FromBody] CreateReturnDto request)
     {
         if (!ModelState.IsValid)
@@ -104,6 +105,7 @@ public class CustomerReturnController : ControllerBase
     /// Customer hủy yêu cầu trả hàng (chỉ khi status = PENDING)
     /// </summary>
     [HttpPut("{returnId}/cancel")]
+    [Authorize(Policy = "PERM_WRITE_RETURN")]
     public async Task<ActionResult<ApiResponse<ReturnDto>>> CancelReturn(long returnId)
     {
         // Lấy customer ID từ token

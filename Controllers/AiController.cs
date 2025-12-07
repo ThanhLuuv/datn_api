@@ -61,7 +61,7 @@ public class AiController : ControllerBase
     /// Trợ lý AI cho admin: phân tích mặt hàng bán chạy, gợi ý danh mục và sách nên nhập thêm / nhập mới.
     /// </summary>
     [HttpPost("admin-assistant")]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_REPORT")]
     public async Task<ActionResult<ApiResponse<AdminAiAssistantResponse>>> AdminAssistant(
         [FromBody] AdminAiAssistantRequest request,
         CancellationToken cancellationToken)
@@ -79,7 +79,7 @@ public class AiController : ControllerBase
     /// Tra cứu giá thị trường cho danh sách tên sách (API riêng, chỉ gọi khi cần).
     /// </summary>
     [HttpPost("market-price")]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_REPORT")]
     public async Task<ActionResult<ApiResponse<MarketPriceLookupResponse>>> MarketPrice(
         [FromBody] MarketPriceLookupRequest request,
         CancellationToken cancellationToken)
@@ -107,7 +107,7 @@ public class AiController : ControllerBase
     /// Chatbox AI realtime cho admin (text) - trả lời các câu hỏi về doanh thu, tồn kho, đơn hàng...
     /// </summary>
     [HttpPost("admin-chat")]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_REPORT")]
     public async Task<ActionResult<ApiResponse<AdminAiChatResponse>>> AdminChat(
         [FromBody] AdminAiChatRequest request,
         CancellationToken cancellationToken)
@@ -140,7 +140,7 @@ public class AiController : ControllerBase
     /// Voice assistant: admin gửi audio, hệ thống phân tích và trả về transcript + audio trả lời đã dựa trên dữ liệu thật.
     /// </summary>
     [HttpPost("admin-voice")]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_REPORT")]
     public async Task<ActionResult<ApiResponse<AdminAiVoiceResponse>>> AdminVoice(
         [FromBody] AdminAiVoiceRequest request,
         CancellationToken cancellationToken)
@@ -173,7 +173,7 @@ public class AiController : ControllerBase
     /// Nhập mới sách từ dữ liệu do AI đề xuất (admin có thể chỉnh sửa trước trên UI).
     /// </summary>
     [HttpPost("admin-import-book")]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_BOOK")]
     public async Task<ActionResult<ApiResponse<AdminAiImportBookResponse>>> AdminImportBook(
         [FromBody] AdminAiImportBookRequest request,
         CancellationToken cancellationToken)
@@ -206,7 +206,7 @@ public class AiController : ControllerBase
     /// AI search (RAG) trả lời câu hỏi dựa trên dữ liệu nội bộ đã index.
     /// </summary>
     [HttpPost("search")]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_REPORT")]
     public async Task<ActionResult<ApiResponse<AiSearchResponse>>> SearchKnowledgeBase(
         [FromBody] AiSearchRequest request,
         CancellationToken cancellationToken)
@@ -239,7 +239,7 @@ public class AiController : ControllerBase
     /// Rebuild index cho AI search (chỉ Admin).
     /// </summary>
     [HttpPost("search/reindex")]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_BOOK")]
     public async Task<ActionResult<ApiResponse<AiSearchReindexResponse>>> RebuildKnowledgeBase(
         [FromBody] AiSearchReindexRequest request,
         CancellationToken cancellationToken)
@@ -258,7 +258,7 @@ public class AiController : ControllerBase
     /// AI tự động quyết định dùng RAG (cho sách) hoặc Function Calling (cho đơn hàng, hóa đơn).
     /// </summary>
     [HttpPost("chat")]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_REPORT")]
     public async Task<ActionResult<ApiResponse<AiSearchResponse>>> Chat(
         [FromBody] ChatRequest request,
         CancellationToken cancellationToken)

@@ -114,7 +114,7 @@ public class TestController : ControllerBase
     /// Endpoint chỉ dành cho ADMIN
     /// </summary>
     [HttpGet("admin-only")]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_READ_REPORT")]
     public IActionResult GetAdminOnly()
     {
         var userEmail = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("email")?.Value;
@@ -131,7 +131,7 @@ public class TestController : ControllerBase
     /// Endpoint dành cho nhân viên bán hàng và admin
     /// </summary>
     [HttpGet("sales-only")]
-    [Authorize(Roles = "SALES_EMPLOYEE,ADMIN")]
+    [Authorize(Policy = "PERM_READ_REPORT")]
     public IActionResult GetSalesOnly()
     {
         var userEmail = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("email")?.Value;
@@ -150,7 +150,7 @@ public class TestController : ControllerBase
     /// Endpoint dành cho nhân viên giao hàng và admin
     /// </summary>
     [HttpGet("delivery-only")]
-    [Authorize(Roles = "DELIVERY_EMPLOYEE,ADMIN")]
+    [Authorize(Policy = "PERM_READ_ORDER")]
     public IActionResult GetDeliveryOnly()
     {
         var userEmail = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("email")?.Value;
@@ -169,7 +169,7 @@ public class TestController : ControllerBase
     /// Endpoint dành cho tất cả nhân viên và admin
     /// </summary>
     [HttpGet("staff-only")]
-    [Authorize(Roles = "SALES_EMPLOYEE,DELIVERY_EMPLOYEE,ADMIN")]
+    [Authorize(Policy = "PERM_READ_ORDER")]
     public IActionResult GetStaffOnly()
     {
         var userEmail = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("email")?.Value;

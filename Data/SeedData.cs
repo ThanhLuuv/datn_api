@@ -7,15 +7,16 @@ public static class SeedData
 {
     public static async Task SeedAsync(BookStoreDbContext context)
     {
-        // Seed Roles
+        // Seed Roles - GIỮ NGUYÊN role IDs hiện tại trong database
+        // Role IDs trong database: CUSTOMER=1, SALES_EMPLOYEE=2, ADMIN=3, DELIVERY_EMPLOYEE=4
         if (!await context.Roles.AnyAsync())
         {
             var roles = new List<Role>
             {
-                new Role { RoleId = 1, Name = "ADMIN", Description = "Quản trị viên" },
+                new Role { RoleId = 1, Name = "CUSTOMER", Description = "Khách hàng" },
                 new Role { RoleId = 2, Name = "SALES_EMPLOYEE", Description = "Nhân viên bán hàng" },
-                new Role { RoleId = 3, Name = "DELIVERY_EMPLOYEE", Description = "Nhân viên giao hàng" },
-                new Role { RoleId = 4, Name = "CUSTOMER", Description = "Khách hàng" }
+                new Role { RoleId = 3, Name = "ADMIN", Description = "Quản trị viên" },
+                new Role { RoleId = 4, Name = "DELIVERY_EMPLOYEE", Description = "Nhân viên giao hàng" }
             };
 
             context.Roles.AddRange(roles);
@@ -129,8 +130,9 @@ public static class SeedData
         }
 
         // Seed Role Permissions - Phân quyền đầy đủ cho từng role
-        // Đảm bảo ADMIN luôn có đầy đủ permissions
-        var adminRoleId = 1L;
+        // Role IDs: CUSTOMER=1, SALES_EMPLOYEE=2, ADMIN=3, DELIVERY_EMPLOYEE=4
+        // Đảm bảo ADMIN (RoleId = 3) luôn có đầy đủ permissions
+        var adminRoleId = 3L;
         var existingAdminPerms = await context.RolePermissions
             .Where(rp => rp.RoleId == adminRoleId)
             .Select(rp => rp.PermissionId)
@@ -161,55 +163,54 @@ public static class SeedData
         {
             var rolePermissions = new List<RolePermission>();
                 
-                // SALES_EMPLOYEE (RoleId = 2) - Nhân viên bán hàng
-            // Có tất cả quyền như ADMIN trừ: READ_EMPLOYEE (34), WRITE_EMPLOYEE (35), READ_ROLE (40), WRITE_ROLE (41), ASSIGN_PERMISSION (42)
-            // Tất cả permissions từ 1 đến 42, trừ 34, 35, 40, 41, 42 (quản lý nhân viên và quyền)
+            // SALES_EMPLOYEE (RoleId = 2) - Nhân viên bán hàng
+            // Có tất cả quyền như ADMIN trừ: READ_EMPLOYEE (34), WRITE_EMPLOYEE (35), READ_DEPARTMENT (36), WRITE_DEPARTMENT (37), READ_ROLE (40), WRITE_ROLE (41), ASSIGN_PERMISSION (42)
             for (int permId = 1; permId <= 42; permId++)
             {
-                if (permId != 34 && permId != 35 && permId != 40 && permId != 41 && permId != 42)
+                if (permId != 34 && permId != 35 && permId != 36 && permId != 37 && permId != 40 && permId != 41 && permId != 42)
                 {
                     rolePermissions.Add(new RolePermission { RoleId = 2, PermissionId = permId });
                 }
             }
                 
-                // DELIVERY_EMPLOYEE (RoleId = 3) - Nhân viên giao hàng
+            // DELIVERY_EMPLOYEE (RoleId = 4) - Nhân viên giao hàng
             // Đọc: Category, Book, Order, Customer, Area
             rolePermissions.AddRange(new[]
             {
-                new RolePermission { RoleId = 3, PermissionId = 1 },  // READ_CATEGORY
-                new RolePermission { RoleId = 3, PermissionId = 3 },  // READ_BOOK
-                new RolePermission { RoleId = 3, PermissionId = 13 }, // READ_ORDER
-                new RolePermission { RoleId = 3, PermissionId = 17 }, // READ_CUSTOMER
-                new RolePermission { RoleId = 3, PermissionId = 38 }, // READ_AREA
+                new RolePermission { RoleId = 4, PermissionId = 1 },  // READ_CATEGORY
+                new RolePermission { RoleId = 4, PermissionId = 3 },  // READ_BOOK
+                new RolePermission { RoleId = 4, PermissionId = 13 }, // READ_ORDER
+                new RolePermission { RoleId = 4, PermissionId = 17 }, // READ_CUSTOMER
+                new RolePermission { RoleId = 4, PermissionId = 38 }, // READ_AREA
             });
             
             // Ghi: Order (chỉ cập nhật trạng thái giao hàng), ASSIGN_DELIVERY
             rolePermissions.AddRange(new[]
             {
-                new RolePermission { RoleId = 3, PermissionId = 14 }, // WRITE_ORDER (chỉ để cập nhật trạng thái)
-                new RolePermission { RoleId = 3, PermissionId = 16 }, // ASSIGN_DELIVERY
+                new RolePermission { RoleId = 4, PermissionId = 14 }, // WRITE_ORDER (chỉ để cập nhật trạng thái)
+                new RolePermission { RoleId = 4, PermissionId = 16 }, // ASSIGN_DELIVERY
             });
             
-            // CUSTOMER (RoleId = 4) - Khách hàng
+            // CUSTOMER (RoleId = 1) - Khách hàng
             // Đọc: Category, Book, Publisher, Author, Promotion (public)
             rolePermissions.AddRange(new[]
             {
-                new RolePermission { RoleId = 4, PermissionId = 1 },  // READ_CATEGORY
-                new RolePermission { RoleId = 4, PermissionId = 3 },  // READ_BOOK
-                new RolePermission { RoleId = 4, PermissionId = 5 },  // READ_PUBLISHER
-                new RolePermission { RoleId = 4, PermissionId = 7 },  // READ_AUTHOR
-                new RolePermission { RoleId = 4, PermissionId = 25 }, // READ_PROMOTION
+                new RolePermission { RoleId = 1, PermissionId = 1 },  // READ_CATEGORY
+                new RolePermission { RoleId = 1, PermissionId = 3 },  // READ_BOOK
+                new RolePermission { RoleId = 1, PermissionId = 5 },  // READ_PUBLISHER
+                new RolePermission { RoleId = 1, PermissionId = 7 },  // READ_AUTHOR
+                new RolePermission { RoleId = 1, PermissionId = 25 }, // READ_PROMOTION
             });
             
             // Ghi: Cart (của chính mình), Order (tạo đơn của chính mình), Payment (thanh toán đơn của chính mình)
             rolePermissions.AddRange(new[]
             {
-                new RolePermission { RoleId = 4, PermissionId = 19 }, // READ_CART
-                new RolePermission { RoleId = 4, PermissionId = 20 }, // WRITE_CART
-                new RolePermission { RoleId = 4, PermissionId = 13 }, // READ_ORDER (chỉ đơn của mình)
-                new RolePermission { RoleId = 4, PermissionId = 14 }, // WRITE_ORDER (tạo đơn)
-                new RolePermission { RoleId = 4, PermissionId = 21 }, // READ_PAYMENT
-                new RolePermission { RoleId = 4, PermissionId = 22 }, // WRITE_PAYMENT
+                new RolePermission { RoleId = 1, PermissionId = 19 }, // READ_CART
+                new RolePermission { RoleId = 1, PermissionId = 20 }, // WRITE_CART
+                new RolePermission { RoleId = 1, PermissionId = 13 }, // READ_ORDER (chỉ đơn của mình)
+                new RolePermission { RoleId = 1, PermissionId = 14 }, // WRITE_ORDER (tạo đơn)
+                new RolePermission { RoleId = 1, PermissionId = 21 }, // READ_PAYMENT
+                new RolePermission { RoleId = 1, PermissionId = 22 }, // WRITE_PAYMENT
             });
 
             context.RolePermissions.AddRange(rolePermissions);

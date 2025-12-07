@@ -24,7 +24,7 @@ public class PromotionController : ControllerBase
     /// Lấy danh sách khuyến mãi với tìm kiếm và phân trang
     /// </summary>
     [HttpGet]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_PROMOTION")]
     public async Task<ActionResult<ApiResponse<PromotionListResponse>>> GetPromotions([FromQuery] PromotionSearchRequest request)
     {
         try
@@ -43,7 +43,7 @@ public class PromotionController : ControllerBase
     /// Lấy thông tin chi tiết khuyến mãi theo ID
     /// </summary>
     [HttpGet("{promotionId}")]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_PROMOTION")]
     public async Task<ActionResult<ApiResponse<PromotionDto>>> GetPromotionById(long promotionId)
     {
         try
@@ -68,7 +68,7 @@ public class PromotionController : ControllerBase
     /// Tạo khuyến mãi mới
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_WRITE_PROMOTION")]
     public async Task<ActionResult<ApiResponse<PromotionDto>>> CreatePromotion([FromBody] CreatePromotionDto createPromotionDto)
     {
         try
@@ -112,7 +112,7 @@ public class PromotionController : ControllerBase
     /// Cập nhật thông tin khuyến mãi
     /// </summary>
     [HttpPut("{promotionId}")]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_WRITE_PROMOTION")]
     public async Task<ActionResult<ApiResponse<PromotionDto>>> UpdatePromotion(long promotionId, [FromBody] UpdatePromotionDto updatePromotionDto)
     {
         try
@@ -156,7 +156,7 @@ public class PromotionController : ControllerBase
     /// Xóa khuyến mãi
     /// </summary>
     [HttpDelete("{promotionId}")]
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Policy = "PERM_WRITE_PROMOTION")]
     public async Task<ActionResult<ApiResponse<bool>>> DeletePromotion(long promotionId)
     {
         try
@@ -191,7 +191,7 @@ public class PromotionController : ControllerBase
     /// Lấy thống kê khuyến mãi
     /// </summary>
     [HttpGet("stats")]
-    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
+    [Authorize(Policy = "PERM_READ_PROMOTION")]
     public async Task<ActionResult<ApiResponse<PromotionStatsDto>>> GetPromotionStats()
     {
         try
