@@ -10,7 +10,7 @@ namespace BookStore.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "ADMIN,EMPLOYEE")]
+[Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
 public class ReturnController : ControllerBase
 {
     private readonly IReturnService _returnService;

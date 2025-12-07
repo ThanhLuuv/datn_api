@@ -21,7 +21,7 @@ public class ExpenseController : ControllerBase
     /// Tạo phiếu chi mới
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "ADMIN,EMPLOYEE")]
+    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
     public async Task<ActionResult<ApiResponse<ExpenseVoucherDto>>> CreateExpenseVoucher([FromBody] CreateExpenseVoucherDto request)
     {
         var userId = GetCurrentUserId();
@@ -34,7 +34,7 @@ public class ExpenseController : ControllerBase
     /// Lấy danh sách phiếu chi
     /// </summary>
     [HttpGet]
-    [Authorize(Roles = "ADMIN,EMPLOYEE")]
+    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
     public async Task<ActionResult<ApiResponse<ExpenseVoucherResponse>>> GetExpenseVouchers(
         [FromQuery] int pageNumber = 1,
         [FromQuery] int pageSize = 50,
@@ -50,7 +50,7 @@ public class ExpenseController : ControllerBase
     /// Lấy thông tin phiếu chi theo ID
     /// </summary>
     [HttpGet("{expenseVoucherId}")]
-    [Authorize(Roles = "ADMIN,EMPLOYEE")]
+    [Authorize(Roles = "ADMIN,SALES_EMPLOYEE,EMPLOYEE")]
     public async Task<ActionResult<ApiResponse<ExpenseVoucherDto>>> GetExpenseVoucherById(long expenseVoucherId)
     {
         var result = await _expenseService.GetExpenseVoucherByIdAsync(expenseVoucherId);
