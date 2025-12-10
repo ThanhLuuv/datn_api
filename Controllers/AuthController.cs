@@ -146,6 +146,46 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
+    /// Yêu cầu đặt lại mật khẩu (Gửi email)
+    /// </summary>
+    [HttpPost("forgot-password")]
+    public async Task<ActionResult<ApiResponse<string>>> ForgotPassword([FromBody] ForgotPasswordDto forgotPasswordDto)
+    {
+        if (!ModelState.IsValid)
+        {
+             return BadRequest(new ApiResponse<string>
+            {
+                Success = false,
+                Message = "Dữ liệu không hợp lệ",
+                Errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage).ToList()
+            });
+        }
+
+        var result = await _authService.ForgotPasswordAsync(forgotPasswordDto);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
+
+    /// <summary>
+    /// Đặt lại mật khẩu mới
+    /// </summary>
+    [HttpPost("reset-password")]
+    public async Task<ActionResult<ApiResponse<string>>> ResetPassword([FromBody] ResetPasswordDto resetPasswordDto)
+    {
+        if (!ModelState.IsValid)
+        {
+             return BadRequest(new ApiResponse<string>
+            {
+                Success = false,
+                Message = "Dữ liệu không hợp lệ",
+                Errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage).ToList()
+            });
+        }
+
+        var result = await _authService.ResetPasswordAsync(resetPasswordDto);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
+
+    /// <summary>
     /// Khởi tạo đăng nhập Google OAuth
     /// </summary>
     /// <returns>Redirect đến Google OAuth</returns>

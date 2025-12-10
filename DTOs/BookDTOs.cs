@@ -131,6 +131,8 @@ public class BookSearchRequest
     public int PageSize { get; set; } = 10;
     public string? SortBy { get; set; } = "Title";
     public string? SortDirection { get; set; } = "asc";
+    public bool IncludeOutOfStock { get; set; } = false;
+    public bool IncludeInactive { get; set; } = false;
 }
 
 public class PriceChangeDto

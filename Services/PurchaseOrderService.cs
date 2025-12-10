@@ -561,7 +561,17 @@ public class PurchaseOrderService : IPurchaseOrderService
                 };
             }
 
-            // Check if purchase order has goods receipt (cannot delete)
+            if (purchaseOrder.StatusId != 1) // Only allow delete if Pending
+            {
+                return new ApiResponse<bool>
+                {
+                    Success = false,
+                    Message = "Không thể xóa đơn đặt mua",
+                    Errors = new List<string> { "Chỉ có thể xóa đơn hàng ở trạng thái Pending" }
+                };
+            }
+
+            // Also check for goods receipts just in case data is inconsistent
             var hasGoodsReceipt = await _context.GoodsReceipts
                 .AnyAsync(gr => gr.PoId == poId);
 
@@ -575,6 +585,8 @@ public class PurchaseOrderService : IPurchaseOrderService
                 };
             }
 
+            // Remove lines first (cascade delete might handle this but safer to be explicit)
+            _context.PurchaseOrderLines.RemoveRange(purchaseOrder.PurchaseOrderLines);
             _context.PurchaseOrders.Remove(purchaseOrder);
             await _context.SaveChangesAsync();
 

@@ -197,6 +197,7 @@ builder.Services.AddScoped<ICartService, CartService>();
 builder.Services.AddScoped<IExpenseService, ExpenseService>();
 builder.Services.AddScoped<IEmployeeService, EmployeeService>();
 builder.Services.AddScoped<IDepartmentService, DepartmentService>();
+builder.Services.AddScoped<IEmailService, EmailService>();
 
 // AI services (Gemini + Text-to-SQL)
 builder.Services.AddHttpClient<IGeminiClient, GeminiClient>();

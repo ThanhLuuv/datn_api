@@ -551,6 +551,7 @@ public class GoodsReceiptService : IGoodsReceiptService
             var availablePurchaseOrders = await _context.PurchaseOrders
                 .Include(po => po.Publisher)
                 .Include(po => po.CreatedByEmployee)
+                .Include(po => po.Status)
                 .Include(po => po.PurchaseOrderLines)
                     .ThenInclude(pol => pol.Book)
                 .Where(po => !_context.GoodsReceipts.Any(gr => gr.PoId == po.PoId))
@@ -563,6 +564,8 @@ public class GoodsReceiptService : IGoodsReceiptService
                     CreatedBy = po.CreatedBy,
                     CreatedByName = po.CreatedByEmployee.FirstName + " " + po.CreatedByEmployee.LastName,
                     Note = po.Note,
+                    StatusId = po.StatusId,
+                    StatusName = po.Status != null ? po.Status.StatusName : null,
                     TotalAmount = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered * pol.UnitPrice),
                     TotalQuantity = po.PurchaseOrderLines.Sum(pol => pol.QtyOrdered),
                     Lines = po.PurchaseOrderLines.Select(pol => new PurchaseOrderLineDto

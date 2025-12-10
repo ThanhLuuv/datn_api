@@ -186,3 +186,4 @@ ORDER BY r.role_id;
 -- role_id = 4 (DELIVERY_EMPLOYEE): 7 permissions
 -- ============================================
 
+

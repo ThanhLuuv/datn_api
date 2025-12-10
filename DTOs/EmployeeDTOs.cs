@@ -19,6 +19,7 @@ public class EmployeeDto
     public long RoleId { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+    public List<long> AreaIds { get; set; } = new List<long>();
 }
 
 public class CreateEmployeeWithAccountRequest
@@ -99,6 +100,8 @@ public class UpdateEmployeeDto
 
     [Required]
     public long DepartmentId { get; set; }
+
+    public List<long>? AreaIds { get; set; }
 }
 
 public class EmployeeListResponse

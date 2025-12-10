@@ -183,7 +183,11 @@ public class EmployeeService : IEmployeeService
             AccountEmail = employee.Account?.Email ?? string.Empty,
             RoleId = employee.Account?.RoleId ?? 0,
             CreatedAt = employee.CreatedAt,
-            UpdatedAt = employee.UpdatedAt
+            UpdatedAt = employee.UpdatedAt,
+            AreaIds = await _context.EmployeeAreas
+                        .Where(ea => ea.EmployeeId == employee.EmployeeId && ea.IsActive)
+                        .Select(ea => ea.AreaId)
+                        .ToListAsync()
         };
 
         return new ApiResponse<EmployeeDto> { Success = true, Message = "OK", Data = dto };
@@ -281,6 +285,32 @@ public class EmployeeService : IEmployeeService
         employee.Email = request.EmployeeEmail;
         employee.DepartmentId = request.DepartmentId;
         employee.UpdatedAt = DateTime.UtcNow;
+
+        // Update Area assignments if provided
+        if (request.AreaIds != null)
+        {
+            var existingAreas = await _context.EmployeeAreas.Where(ea => ea.EmployeeId == employeeId).ToListAsync();
+            _context.EmployeeAreas.RemoveRange(existingAreas);
+
+            if (request.AreaIds.Any())
+            {
+                var validAreaIds = await _context.Areas
+                    .Where(a => request.AreaIds.Contains(a.AreaId))
+                    .Select(a => a.AreaId)
+                    .ToListAsync();
+
+                foreach (var areaId in validAreaIds)
+                {
+                    _context.EmployeeAreas.Add(new EmployeeArea
+                    {
+                        EmployeeId = employeeId,
+                        AreaId = areaId,
+                        IsActive = true,
+                        AssignedAt = DateTime.UtcNow
+                    });
+                }
+            }
+        }
 
         await _context.SaveChangesAsync();
 

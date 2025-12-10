@@ -38,7 +38,7 @@ public class CategoryService : ICategoryService
                     CategoryId = c.CategoryId,
                     Name = c.Name,
                     Description = c.Description,
-                    BookCount = c.Books.Count
+                    BookCount = c.Books.Count(b => b.Stock > 0 && b.Status == true)
                 })
                 .ToListAsync();
 
@@ -80,7 +80,7 @@ public class CategoryService : ICategoryService
                     CategoryId = c.CategoryId,
                     Name = c.Name,
                     Description = c.Description,
-                    BookCount = c.Books.Count
+                    BookCount = c.Books.Count(b => b.Stock > 0 && b.Status == true)
                 })
                 .FirstOrDefaultAsync();
 
@@ -205,7 +205,7 @@ public class CategoryService : ICategoryService
                 CategoryId = category.CategoryId,
                 Name = category.Name,
                 Description = category.Description,
-                BookCount = category.Books.Count
+                BookCount = category.Books.Count(b => b.Stock > 0 && b.Status == true)
             };
 
             return new ApiResponse<CategoryDto>

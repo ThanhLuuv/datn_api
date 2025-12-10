@@ -67,6 +67,7 @@ public class OrderService : IOrderService
 
             var orders = await query
                 .OrderByDescending(o => o.PlacedAt)
+                .ThenByDescending(o => o.OrderId)
                 .Skip((request.PageNumber - 1) * request.PageSize)
                 .Take(request.PageSize)
                 .Select(o => new OrderDto
@@ -473,6 +474,7 @@ public class OrderService : IOrderService
                 .Include(o => o.DeliveredByEmployee)
                 .Where(o => o.DeliveredBy == deliveryEmployeeId)
                 .OrderByDescending(o => o.PlacedAt)
+                .ThenByDescending(o => o.OrderId)
                 .AsQueryable();
 
             var totalCount = await query.CountAsync();

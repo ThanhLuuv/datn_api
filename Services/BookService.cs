@@ -91,6 +91,17 @@ public class BookService : IBookService
                 query = query.Where(b => b.PublishYear <= searchRequest.MaxYear.Value);
             }
 
+            // Provide option to hide out of stock items (default is hidden based on DTO)
+            if (!searchRequest.IncludeOutOfStock)
+            {
+                query = query.Where(b => b.Stock > 0);
+            }
+
+            if (!searchRequest.IncludeInactive)
+            {
+                query = query.Where(b => b.Status == true);
+            }
+
             // Apply sorting
             query = searchRequest.SortBy?.ToLower() switch
             {
@@ -280,6 +291,16 @@ public class BookService : IBookService
             if (searchRequest.MaxYear.HasValue)
             {
                 query = query.Where(b => b.PublishYear <= searchRequest.MaxYear.Value);
+            }
+
+            if (!searchRequest.IncludeOutOfStock)
+            {
+                query = query.Where(b => b.Stock > 0);
+            }
+
+            if (!searchRequest.IncludeInactive)
+            {
+                query = query.Where(b => b.Status == true);
             }
 
             // Apply sorting

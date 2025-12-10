@@ -2,7 +2,10 @@ using BookStore.Api.Data;
 using BookStore.Api.DTOs;
 using BookStore.Api.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using BCrypt.Net;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 
 namespace BookStore.Api.Services;
 
@@ -10,11 +13,17 @@ public class AuthService : IAuthService
 {
     private readonly BookStoreDbContext _context;
     private readonly IJwtService _jwtService;
+    private readonly IEmailService _emailService;
+    private readonly IMemoryCache _cache;
+    private readonly IConfiguration _configuration;
 
-    public AuthService(BookStoreDbContext context, IJwtService jwtService)
+    public AuthService(BookStoreDbContext context, IJwtService jwtService, IEmailService emailService, IMemoryCache cache, IConfiguration configuration)
     {
         _context = context;
         _jwtService = jwtService;
+        _emailService = emailService;
+        _cache = cache;
+        _configuration = configuration;
     }
 
     public async Task<ApiResponse<AuthResponseDto>> RegisterAsync(RegisterDto registerDto)
@@ -383,6 +392,123 @@ public class AuthService : IAuthService
                 Success = false,
                 Message = "Đã xảy ra lỗi khi đăng nhập Google",
                 Errors = new List<string> { ex.Message }
+            };
+        }
+    }
+
+    public async Task<ApiResponse<string>> ForgotPasswordAsync(ForgotPasswordDto forgotPasswordDto)
+    {
+        try
+        {
+            var account = await _context.Accounts
+                .FirstOrDefaultAsync(a => a.Email == forgotPasswordDto.Email);
+
+            if (account == null)
+            {
+                // To prevent email enumeration, we effectively return success but don't send email
+                // or we can be explicit. For UX, explicit is often better but less secure.
+                // User requirement: "comprehensive". I'll be nice and return "If email exists..."
+                // But user specifically asked for functionality.
+                return new ApiResponse<string>
+                {
+                    Success = true, 
+                    Message = "Nếu email tồn tại trong hệ thống, bạn sẽ nhận được hướng dẫn đặt lại mật khẩu."
+                };
+            }
+
+            if (!account.IsActive)
+            {
+                return new ApiResponse<string>
+                {
+                    Success = false,
+                    Message = "Tài khoản đang bị khóa."
+                };
+            }
+
+            // Generate token
+            var token = Guid.NewGuid().ToString("N");
+            
+            // Store in cache for 15 minutes
+            _cache.Set($"RESET_PASS_{token}", account.Email, TimeSpan.FromMinutes(15));
+
+            // Generate Link
+            // Retrieve frontend URL from config or use defaults
+            var isProduction = _configuration["ASPNETCORE_ENVIRONMENT"] != "Development";
+            var baseUrl = _configuration["FrontendUrl"] ?? "https://bookstore.thanhlaptrinh.online";
+            var resetLink = $"{baseUrl}/#!/reset-password?token={token}";
+
+            // Send Email
+            var body = $@"
+                <h3>Yêu cầu đặt lại mật khẩu</h3>
+                <p>Bạn nhận được email này vì chúng tôi đã nhận được yêu cầu đặt lại mật khẩu cho tài khoản: {account.Email}</p>
+                <p>Vui lòng click vào link bên dưới để đặt lại mật khẩu (Link có hiệu lực trong 15 phút):</p>
+                <p><a href='{resetLink}'>{resetLink}</a></p>
+                <p>Nếu bạn không yêu cầu, vui lòng bỏ qua email này.</p>
+            ";
+
+            await _emailService.SendEmailAsync(account.Email, "Đặt lại mật khẩu BookStore", body);
+
+            return new ApiResponse<string>
+            {
+                Success = true,
+                Message = "Email hướng dẫn đặt lại mật khẩu đã được gửi."
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<string>
+            {
+                Success = false,
+                Message = "Lỗi xử lý quên mật khẩu: " + ex.Message
+            };
+        }
+    }
+
+    public async Task<ApiResponse<string>> ResetPasswordAsync(ResetPasswordDto resetPasswordDto)
+    {
+        try
+        {
+            if (!_cache.TryGetValue($"RESET_PASS_{resetPasswordDto.Token}", out string? email) || string.IsNullOrEmpty(email))
+            {
+                return new ApiResponse<string>
+                {
+                    Success = false,
+                    Message = "Link đặt lại mật khẩu không hợp lệ hoặc đã hết hạn."
+                };
+            }
+
+            var account = await _context.Accounts.FirstOrDefaultAsync(a => a.Email == email);
+            if (account == null)
+            {
+                return new ApiResponse<string>
+                {
+                    Success = false,
+                    Message = "Tài khoản không tồn tại."
+                };
+            }
+
+            // Update password
+            account.PasswordHash = BCrypt.Net.BCrypt.HashPassword(resetPasswordDto.NewPassword);
+            account.UpdatedAt = DateTime.UtcNow;
+
+            _context.Accounts.Update(account);
+            await _context.SaveChangesAsync();
+
+            // Clear token
+            _cache.Remove($"RESET_PASS_{resetPasswordDto.Token}");
+
+            return new ApiResponse<string>
+            {
+                Success = true,
+                Message = "Đặt lại mật khẩu thành công. Vui lòng đăng nhập với mật khẩu mới."
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<string>
+            {
+                Success = false,
+                Message = "Lỗi đặt lại mật khẩu: " + ex.Message
             };
         }
     }
