@@ -35,3 +35,6 @@
 - Trạng thái khởi tạo: `PendingConfirmation`; các bước duyệt/giao tiếp theo dùng API khác.
 
 
+
+
+

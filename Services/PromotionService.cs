@@ -92,7 +92,11 @@ public class PromotionService : IPromotionService
                 .Take(request.PageSize)
                 .ToListAsync();
 
-            var promotionDtos = promotions.Select(MapToPromotionDto).ToList();
+            var promotionDtos = new List<PromotionDto>();
+            foreach (var promotion in promotions)
+            {
+                promotionDtos.Add(await MapToPromotionDtoAsync(promotion));
+            }
 
             var result = new PromotionListResponse
             {
@@ -144,7 +148,7 @@ public class PromotionService : IPromotionService
                 };
             }
 
-            var promotionDto = MapToPromotionDto(promotion);
+            var promotionDto = await MapToPromotionDtoAsync(promotion);
             return new ApiResponse<PromotionDto>
             {
                 Success = true,
@@ -268,7 +272,7 @@ public class PromotionService : IPromotionService
                         .ThenInclude(b => b.Publisher)
                 .FirstAsync(p => p.PromotionId == promotion.PromotionId);
 
-            var promotionDto = MapToPromotionDto(createdPromotion);
+            var promotionDto = await MapToPromotionDtoAsync(createdPromotion);
             return new ApiResponse<PromotionDto> { Success = true, Message = "Tạo khuyến mãi thành công", Data = promotionDto };
         }
         catch (Exception ex)
@@ -357,7 +361,7 @@ public class PromotionService : IPromotionService
                         .ThenInclude(b => b.Publisher)
                 .FirstAsync(p => p.PromotionId == promotionId);
 
-            var promotionDto = MapToPromotionDto(updatedPromotion);
+            var promotionDto = await MapToPromotionDtoAsync(updatedPromotion);
             return new ApiResponse<PromotionDto> { Success = true, Message = "Cập nhật khuyến mãi thành công", Data = promotionDto };
         }
         catch (Exception ex)
@@ -464,15 +468,20 @@ public class PromotionService : IPromotionService
                 .Where(bp => bp.Promotion.StartDate <= today && bp.Promotion.EndDate >= today)
                 .ToListAsync();
 
-            var bookPromotionDtos = activePromotionBooks.Select(bp => new PromotionBookDto
+            var bookPromotionDtos = new List<PromotionBookDto>();
+            foreach (var bp in activePromotionBooks)
             {
-                Isbn = bp.Isbn,
-                Title = bp.Book.Title,
-                UnitPrice = bp.Book.AveragePrice,
-                DiscountedPrice = bp.Book.AveragePrice * (1 - bp.Promotion.DiscountPct / 100),
-                CategoryName = bp.Book.Category.Name,
-                PublisherName = bp.Book.Publisher.Name
-            }).ToList();
+                var currentPrice = await GetCurrentPriceAsync(bp.Isbn);
+                bookPromotionDtos.Add(new PromotionBookDto
+                {
+                    Isbn = bp.Isbn,
+                    Title = bp.Book.Title,
+                    UnitPrice = currentPrice,
+                    DiscountedPrice = currentPrice * (1 - bp.Promotion.DiscountPct / 100),
+                    CategoryName = bp.Book.Category.Name,
+                    PublisherName = bp.Book.Publisher.Name
+                });
+            }
 
             return new ApiResponse<List<PromotionBookDto>>
             {
@@ -510,7 +519,11 @@ public class PromotionService : IPromotionService
                            p.StartDate <= today && p.EndDate >= today)
                 .ToListAsync();
 
-            var promotionDtos = activePromotions.Select(MapToPromotionDto).ToList();
+            var promotionDtos = new List<PromotionDto>();
+            foreach (var promotion in activePromotions)
+            {
+                promotionDtos.Add(await MapToPromotionDtoAsync(promotion));
+            }
             return new ApiResponse<List<PromotionDto>>
             {
                 Success = true,
@@ -546,8 +559,47 @@ public class PromotionService : IPromotionService
             : query.OrderByDescending(keySelector);
     }
 
-    private static PromotionDto MapToPromotionDto(Promotion promotion)
+    private async Task<decimal> GetCurrentPriceAsync(string isbn, DateTime? asOfDate = null)
     {
+        var effectiveDate = asOfDate ?? DateTime.UtcNow;
+        
+        var currentPriceChange = await _context.PriceChanges
+            .Where(pc => pc.Isbn == isbn && pc.ChangedAt <= effectiveDate)
+            .OrderByDescending(pc => pc.ChangedAt)
+            .FirstOrDefaultAsync();
+
+        if (currentPriceChange != null)
+        {
+            return currentPriceChange.NewPrice;
+        }
+
+        // Fallback to average price from book table
+        var book = await _context.Books
+            .Where(b => b.Isbn == isbn)
+            .Select(b => b.AveragePrice)
+            .FirstOrDefaultAsync();
+
+        return book;
+    }
+
+    private async Task<PromotionDto> MapToPromotionDtoAsync(Promotion promotion)
+    {
+        var bookDtos = new List<PromotionBookDto>();
+        
+        foreach (var bp in promotion.BookPromotions)
+        {
+            var currentPrice = await GetCurrentPriceAsync(bp.Isbn);
+            bookDtos.Add(new PromotionBookDto
+            {
+                Isbn = bp.Isbn,
+                Title = bp.Book.Title,
+                UnitPrice = currentPrice,
+                DiscountedPrice = currentPrice * (1 - promotion.DiscountPct / 100),
+                CategoryName = bp.Book.Category.Name,
+                PublisherName = bp.Book.Publisher.Name
+            });
+        }
+
         return new PromotionDto
         {
             PromotionId = promotion.PromotionId,
@@ -560,15 +612,7 @@ public class PromotionService : IPromotionService
             IssuedByName = $"{promotion.IssuedByEmployee.FirstName} {promotion.IssuedByEmployee.LastName}",
             CreatedAt = promotion.CreatedAt,
             UpdatedAt = promotion.UpdatedAt,
-            Books = promotion.BookPromotions.Select(bp => new PromotionBookDto
-            {
-                Isbn = bp.Isbn,
-                Title = bp.Book.Title,
-                UnitPrice = bp.Book.AveragePrice,
-                DiscountedPrice = bp.Book.AveragePrice * (1 - promotion.DiscountPct / 100),
-                CategoryName = bp.Book.Category.Name,
-                PublisherName = bp.Book.Publisher.Name
-            }).ToList()
+            Books = bookDtos
         };
     }
 }
