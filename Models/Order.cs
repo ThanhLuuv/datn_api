@@ -48,6 +48,11 @@ public class Order
     [Column("note")]
     public string? Note { get; set; }
 
+    [MaxLength(500)]
+    [Column("delivery_proof_image_url")]
+    public string? DeliveryProofImageUrl { get; set; }
+
+
     [Column("approved_by")]
     public long? ApprovedBy { get; set; }
 

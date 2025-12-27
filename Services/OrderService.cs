@@ -83,6 +83,7 @@ public class OrderService : IOrderService
                     DeliveryAt = o.DeliveryAt,
                     Status = o.Status.ToString(),
                     Note = o.Note,
+                    DeliveryProofImageUrl = o.DeliveryProofImageUrl,
                     ApprovedBy = o.ApprovedBy,
                     ApprovedByName = o.ApprovedByEmployee != null ? o.ApprovedByEmployee.FirstName + " " + o.ApprovedByEmployee.LastName : null,
                     DeliveredBy = o.DeliveredBy,
@@ -173,6 +174,7 @@ public class OrderService : IOrderService
                     DeliveryAt = o.DeliveryAt,
                     Status = o.Status.ToString(),
                     Note = o.Note,
+                    DeliveryProofImageUrl = o.DeliveryProofImageUrl,
                     ApprovedBy = o.ApprovedBy,
                     ApprovedByName = o.ApprovedByEmployee != null ? o.ApprovedByEmployee.FirstName + " " + o.ApprovedByEmployee.LastName : null,
                     DeliveredBy = o.DeliveredBy,
@@ -353,7 +355,32 @@ public class OrderService : IOrderService
                 return new ApiResponse<OrderDto> { Success = false, Message = "Xác nhận giao hàng thất bại" };
             }
 
+            // Upload delivery proof image to Cloudinary if provided
+            string? deliveryProofImageUrl = null;
+            if (request.DeliveryProofImageFile != null)
+            {
+                deliveryProofImageUrl = await UploadDeliveryProofImageAsync(request.DeliveryProofImageFile, orderId);
+                if (string.IsNullOrEmpty(deliveryProofImageUrl))
+                {
+                    return new ApiResponse<OrderDto>
+                    {
+                        Success = false,
+                        Message = "Không thể upload ảnh minh chứng. Vui lòng thử lại.",
+                        Errors = new List<string> { "Cloudinary upload failed" }
+                    };
+                }
+            }
+
+            // Update order status and delivery proof
             order.Status = OrderStatus.Delivered;
+            order.DeliveryProofImageUrl = deliveryProofImageUrl ?? request.DeliveryProofImageUrl;
+            
+            // Lưu note nếu có
+            if (!string.IsNullOrWhiteSpace(request.Note))
+            {
+                order.Note = request.Note;
+            }
+            
             await _context.SaveChangesAsync();
 
             return await GetOrderByIdAsync(orderId);
@@ -989,6 +1016,42 @@ Hệ thống BookStore"
         {
             // Log error but don't fail the assignment
             Console.WriteLine($"Warning: Failed to send delivery assignment email: {ex.Message}");
+        }
+    }
+
+    private async Task<string?> UploadDeliveryProofImageAsync(IFormFile imageFile, long orderId)
+    {
+        try
+        {
+            var cloudinarySettings = _configuration.GetSection("Cloudinary");
+            var cloudName = cloudinarySettings["CloudName"];
+            var apiKey = cloudinarySettings["ApiKey"];
+            var apiSecret = cloudinarySettings["ApiSecret"];
+
+            if (string.IsNullOrEmpty(cloudName) || string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(apiSecret))
+            {
+                return null;
+            }
+
+            var account = new CloudinaryDotNet.Account(cloudName, apiKey, apiSecret);
+            var cloudinary = new CloudinaryDotNet.Cloudinary(account);
+
+            using var stream = imageFile.OpenReadStream();
+            var uploadParams = new CloudinaryDotNet.Actions.ImageUploadParams
+            {
+                File = new CloudinaryDotNet.FileDescription(imageFile.FileName, stream),
+                PublicId = $"delivery_proofs/order_{orderId}_{DateTime.UtcNow:yyyyMMddHHmmss}",
+                Overwrite = false,
+                Folder = "delivery_proofs"
+            };
+
+            var uploadResult = await cloudinary.UploadAsync(uploadParams);
+            return uploadResult?.SecureUrl?.ToString();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error uploading delivery proof image: {ex.Message}");
+            return null;
         }
     }
 }

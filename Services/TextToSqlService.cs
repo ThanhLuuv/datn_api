@@ -131,6 +131,27 @@ public class TextToSqlService : ITextToSqlService
                 recentMessages,
                 cancellationToken);
 
+            // Log AI output for debugging
+            _logger.LogInformation(
+                "\n" +
+                "╔════════════════════════════════════════════════════════════════════════════╗\n" +
+                "║                      TEXT-TO-SQL AI RESPONSE                               ║\n" +
+                "╠════════════════════════════════════════════════════════════════════════════╣\n" +
+                "║ Question: {Question}\n" +
+                "╠────────────────────────────────────────────────────────────────────────────╣\n" +
+                "║ Generated SQL:\n" +
+                "║ {SqlQuery}\n" +
+                "╠────────────────────────────────────────────────────────────────────────────╣\n" +
+                "║ Row Count: {RowCount}\n" +
+                "╠────────────────────────────────────────────────────────────────────────────╣\n" +
+                "║ AI Answer:\n" +
+                "║ {Answer}\n" +
+                "╚════════════════════════════════════════════════════════════════════════════╝",
+                trimmedQuestion,
+                sql,
+                queryResult.TotalRows,
+                answer);
+
             return new ApiResponse<TextToSqlResponse>
             {
                 Success = true,
@@ -177,9 +198,24 @@ public class TextToSqlService : ITextToSqlService
         var today = DateTime.UtcNow.Date.ToString("yyyy-MM-dd");
 
         var systemPrompt = $"""
-        Bạn là chuyên gia SQL MySQL.
+        Bạn là chuyên gia SQL MySQL cho hệ thống quản lý nhà sách.
         Nhiệm vụ của bạn: dựa trên lịch sử hội thoại gần nhất và schema dưới đây để tạo ra đúng MỘT câu lệnh SELECT trả lời cho câu hỏi hiện tại:
         {_options.DbSchema}
+
+        QUAN TRỌNG - Quy tắc nghiệp vụ về trạng thái đơn hàng:
+        Bảng `order` có cột `status` (INT) với các giá trị:
+        - 0 = PendingConfirmation (Chờ xác nhận) - đơn mới tạo, chưa xử lý
+        - 1 = Confirmed (Đã xác nhận) - đang trong quá trình giao hàng
+        - 2 = Delivered (Đã giao) - ĐÃ GIAO THÀNH CÔNG, ĐÃ BÁN ĐƯỢC, TÍNH VÀO DOANH THU
+        - 3 = Cancelled (Đã hủy) - đơn bị hủy, KHÔNG tính doanh thu
+
+        Khi người dùng hỏi về:
+        - "đơn hàng đã bán", "đơn bán được", "đơn thành công", "đơn gần nhất" → WHERE status = 2
+        - "doanh thu", "tổng tiền bán được", "thu nhập" → WHERE status = 2
+        - "đơn đang giao" → WHERE status = 1
+        - "đơn chờ xử lý" → WHERE status = 0
+        - "đơn bị hủy" → WHERE status = 3
+        Chỉ được phép đọc chứ không được ghi hoặc chỉnh sửa thông tin trong cơ sở dữ liệu.
 
         Thông tin ngữ cảnh thời gian:
         - Hôm nay (ngày hệ thống, theo UTC) là: {today}.

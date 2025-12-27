@@ -118,11 +118,20 @@ public class OrderController : ControllerBase
 
     [HttpPost("{orderId}/confirm-delivered")]
     [Authorize(Policy = "PERM_WRITE_ORDER")]
-    public async Task<ActionResult<ApiResponse<OrderDto>>> ConfirmDelivered(long orderId, [FromBody] ConfirmDeliveredRequest request)
+    public async Task<ActionResult<ApiResponse<OrderDto>>> ConfirmDelivered(long orderId, [FromForm] ConfirmDeliveredFormRequest request)
     {
         var email = User.FindFirst(ClaimTypes.Email)?.Value ?? User.FindFirst("email")?.Value ?? User.FindFirst("sub")?.Value;
         if (string.IsNullOrEmpty(email)) return Unauthorized(new ApiResponse<OrderDto> { Success = false, Message = "Không thể xác định người dùng" });
-        var result = await _orderService.ConfirmDeliveredAsync(orderId, request, email);
+        
+        // Convert form request to service request
+        var serviceRequest = new ConfirmDeliveredRequest
+        {
+            Success = request.Success,
+            Note = request.Note,
+            DeliveryProofImageFile = request.DeliveryProofImageFile
+        };
+        
+        var result = await _orderService.ConfirmDeliveredAsync(orderId, serviceRequest, email);
         if (!result.Success) return BadRequest(result);
         return Ok(result);
     }

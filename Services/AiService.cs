@@ -675,6 +675,36 @@ Dạng JSON bắt buộc:
             }
         }
 
+        // Log AI output for debugging
+        _logger.LogInformation(
+            "\n" +
+            "╔════════════════════════════════════════════════════════════════════════════╗\n" +
+            "║                    ADMIN ASSISTANT AI RESPONSE                             ║\n" +
+            "╠════════════════════════════════════════════════════════════════════════════╣\n" +
+            "║ Period: {FromDate} to {ToDate}\n" +
+            "╠────────────────────────────────────────────────────────────────────────────╣\n" +
+            "║ Overview:\n" +
+            "║ {Overview}\n" +
+            "╠────────────────────────────────────────────────────────────────────────────╣\n" +
+            "║ Recommended Categories ({CategoryCount}):\n" +
+            "║ {Categories}\n" +
+            "╠────────────────────────────────────────────────────────────────────────────╣\n" +
+            "║ Book Suggestions ({BookCount}):\n" +
+            "║ {BookSuggestions}\n" +
+            "╠────────────────────────────────────────────────────────────────────────────╣\n" +
+            "║ Customer Feedback Summary:\n" +
+            "║ {FeedbackSummary}\n" +
+            "╚════════════════════════════════════════════════════════════════════════════╝",
+            from.ToString("yyyy-MM-dd"),
+            to.ToString("yyyy-MM-dd"),
+            response.Overview,
+            response.RecommendedCategories.Count,
+            string.Join(", ", response.RecommendedCategories),
+            response.BookSuggestions.Count,
+            string.Join("\n║   ", response.BookSuggestions.Select(b => 
+                $"- {b.Title} ({b.Isbn ?? "NEW"}) | {b.Category} | {b.Reason}")),
+            response.CustomerFeedbackSummary);
+
         return new ApiResponse<AdminAiAssistantResponse>
         {
             Success = true,

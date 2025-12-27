@@ -24,6 +24,7 @@ public class OrderDto
     public List<OrderLineDto> Lines { get; set; } = new();
     public OrderInvoiceDto? Invoice { get; set; }
     public string? PaymentUrl { get; set; }
+    public string? DeliveryProofImageUrl { get; set; }
 }
 
 public class OrderLineDto
@@ -119,6 +120,20 @@ public class ConfirmDeliveredRequest
     [Required]
     public bool Success { get; set; }
     public string? Note { get; set; }
+    
+    public IFormFile? DeliveryProofImageFile { get; set; }
+    
+    [MaxLength(500)]
+    public string? DeliveryProofImageUrl { get; set; }
+}
+
+public class ConfirmDeliveredFormRequest
+{
+    [Required]
+    public bool Success { get; set; }
+    public string? Note { get; set; }
+    
+    public IFormFile? DeliveryProofImageFile { get; set; }
 }
 
 public class CancelOrderRequest
