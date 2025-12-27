@@ -11,11 +11,13 @@ public class PaymentService : IPaymentService
 {
 	private readonly BookStoreDbContext _context;
 	private readonly IConfiguration _config;
+    private readonly IEmailService _emailService;
 
-	public PaymentService(BookStoreDbContext context, IConfiguration config)
+	public PaymentService(BookStoreDbContext context, IConfiguration config, IEmailService emailService)
 	{
 		_context = context;
 		_config = config;
+        _emailService = emailService;
 	}
 
 	public async Task<ApiResponse<CreatePaymentLinkResponseDto>> CreatePaymentLinkAsync(CreatePaymentLinkRequestDto request)
@@ -260,14 +262,21 @@ public class PaymentService : IPaymentService
 				txn.RawResponse = payload;
 				txn.UpdatedAt = DateTime.UtcNow;
 				
+				Invoice? invoiceToSend = null;
+				Order? orderToSend = null;
+
 				// If payment successful, create invoice and reduce stock
 				if (status.ToUpperInvariant() == "PAID")
 				{
 					var order = await _context.Orders
-						.Include(o => o.OrderLines)
+						.Include(o => o.OrderLines).ThenInclude(ol => ol.Book)
+						.Include(o => o.Customer)
 						.FirstOrDefaultAsync(o => o.OrderId == txn.OrderId);
+					
 					if (order != null)
 					{
+						orderToSend = order;
+
 						// Create invoice for paid order (without tax for now)
 						var totalAmount = order.OrderLines.Sum(ol => ol.UnitPrice * ol.Qty);
 						
@@ -285,6 +294,7 @@ public class PaymentService : IPaymentService
 							UpdatedAt = DateTime.UtcNow
 						};
 						_context.Invoices.Add(invoice);
+						invoiceToSend = invoice;
 						
 						// Reduce stock for each book in the order
 						foreach (var orderLine in order.OrderLines)
@@ -309,6 +319,23 @@ public class PaymentService : IPaymentService
 				}
 				
 				await _context.SaveChangesAsync();
+
+				// Send email if invoice created (after successful save)
+				if (invoiceToSend != null && orderToSend != null)
+				{
+					var emailTo = orderToSend.Customer?.Email ?? string.Empty;
+					if (!string.IsNullOrEmpty(emailTo))
+					{
+						// Fire and forget email to avoid blocking response
+						_ = Task.Run(() => _emailService.SendOrderInvoiceEmailAsync(emailTo, orderToSend, invoiceToSend));
+						Console.WriteLine($"Queued invoice email to {emailTo}");
+					}
+					else 
+					{
+						Console.WriteLine($"No email found for customer of order {orderToSend.OrderId}, skipping invoice email.");
+					}
+				}
+
 				Console.WriteLine($"Updated transaction {orderCode} to status {status}");
 			}
 			else
