@@ -259,7 +259,7 @@ public class EmailService : IEmailService
             {
                 var bookTitle = line.Book?.Title ?? "Book ISBN " + line.Isbn;
                 
-                table.Cell().Element(CellStyle).Text(index++);
+                table.Cell().Element(CellStyle).Text($"{index++}");
                 table.Cell().Element(CellStyle).Text(bookTitle);
                 table.Cell().Element(CellStyle).AlignRight().Text($"{line.UnitPrice:N0} ₫");
                 table.Cell().Element(CellStyle).AlignCenter().Text($"{line.Qty}");
@@ -287,5 +287,100 @@ public class EmailService : IEmailService
                 x.Span("BookStore System - Generated via QuestPDF");
             });
         });
+    }
+    public async Task SendDeliverySuccessEmailAsync(string to, BookStore.Api.Models.Order order)
+    {
+        try 
+        {
+            var subject = $"Giao Hàng Thành Công - Đơn hàng #{order.OrderId} - BookStore";
+            var email = new MimeMessage();
+            var fromEmail = _configuration["EmailSettings:FromEmail"] ?? "noreply@bookstore.com";
+            var fromName = _configuration["EmailSettings:FromName"] ?? "BookStore";
+            
+            email.From.Add(new MailboxAddress(fromName, fromEmail));
+            email.To.Add(MailboxAddress.Parse(to));
+            email.Subject = subject;
+
+            var builder = new BodyBuilder
+            {
+                TextBody = $"Đơn hàng #{order.OrderId} đã giao thành công. Cảm ơn bạn đã mua hàng."
+            };
+            
+            var imageUrl = order.DeliveryProofImageUrl;
+            string? imageCid = null;
+
+            if (!string.IsNullOrEmpty(imageUrl))
+            {
+                 try 
+                 {
+                    using (var client = new HttpClient())
+                    {
+                        var imageBytes = await client.GetByteArrayAsync(imageUrl);
+                        var attachment = builder.Attachments.Add("delivery_proof.jpg", imageBytes, new ContentType("image", "jpeg"));
+                        attachment.ContentId = MimeKit.Utils.MimeUtils.GenerateMessageId();
+                        attachment.ContentDisposition = new ContentDisposition(ContentDisposition.Inline);
+                        imageCid = attachment.ContentId;
+                    }
+                 }
+                 catch(Exception ex)
+                 {
+                     _logger.LogWarning($"Failed to download proof image: {ex.Message}");
+                 }
+            }
+            
+            builder.HtmlBody = $@"
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+        .header {{ color: #28a745; text-align: center; }}
+        .content {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .image-container {{ text-align: center; margin-top: 20px; }}
+        .image-container img {{ max-width: 100%; border: 1px solid #ddd; padding: 5px; border-radius: 5px; }}
+        .btn {{ display: inline-block; padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; margin-top: 20px; }}
+    </style>
+</head>
+<body>
+    <div class='content'>
+        <h2 class='header'>Giao Hàng Thành Công!</h2>
+        <p>Xin chào <strong>{order.ReceiverName}</strong>,</p>
+        <p>Kiện hàng thuộc đơn hàng <strong>#{order.OrderId}</strong> đã được giao thành công đến địa chỉ:</p>
+        <p><i>{order.ShippingAddress}</i></p>
+        
+        {(imageCid != null ? 
+            $"<div class='image-container'><p><strong>Ảnh xác thực giao hàng:</strong></p><img src='cid:{imageCid}' alt='Delivery Proof' /></div>" : 
+            (!string.IsNullOrEmpty(imageUrl) ? $"<p>Xem ảnh xác thực: <a href='{imageUrl}'>Tại đây</a></p>" : "")
+        )}
+
+        <p>Cảm ơn bạn đã tin tưởng và mua sắm tại BookStore!</p>
+        <div style='text-align: center;'>
+            <a href='https://bookstore.thanhlaptrinh.online' class='btn'>Tiếp tục mua sắm</a>
+        </div>
+    </div>
+</body>
+</html>";
+
+            email.Body = builder.ToMessageBody();
+
+            using var smtp = new SmtpClient();
+            var host = _configuration["EmailSettings:Host"] ?? _configuration["Email:Smtp:Host"] ?? "smtp.gmail.com";
+            var portStr = _configuration["EmailSettings:Port"] ?? _configuration["Email:Smtp:Port"] ?? "587";
+            var port = int.Parse(portStr);
+            var username = _configuration["EmailSettings:UserName"] ?? _configuration["Email:Credentials:User"];
+            var password = _configuration["EmailSettings:Password"] ?? _configuration["Email:Credentials:Password"];
+
+            if (!string.IsNullOrEmpty(username) && !string.IsNullOrEmpty(password))
+            {
+                await smtp.ConnectAsync(host, port, SecureSocketOptions.StartTls);
+                await smtp.AuthenticateAsync(username, password);
+                await smtp.SendAsync(email);
+                await smtp.DisconnectAsync(true);
+            }
+        }
+        catch (Exception ex)
+        {
+             _logger.LogError(ex, "Failed to send delivery success email to {To}", to);
+        }
     }
 }

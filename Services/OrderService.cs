@@ -15,8 +15,9 @@ public class OrderService : IOrderService
     private readonly IExpenseService _expenseService;
     private readonly ICartService _cartService;
     private readonly IConfiguration _configuration;
+    private readonly IEmailService _emailService;
 
-    public OrderService(BookStoreDbContext context, IPaymentService paymentService, IInvoiceService invoiceService, ICartService cartService, IConfiguration configuration, IExpenseService expenseService)
+    public OrderService(BookStoreDbContext context, IPaymentService paymentService, IInvoiceService invoiceService, ICartService cartService, IConfiguration configuration, IExpenseService expenseService, IEmailService emailService)
     {
         _context = context;
         _paymentService = paymentService;
@@ -24,6 +25,7 @@ public class OrderService : IOrderService
         _cartService = cartService;
         _configuration = configuration;
         _expenseService = expenseService;
+        _emailService = emailService;
     }
 
     public async Task<ApiResponse<OrderListResponse>> GetOrdersAsync(OrderSearchRequest request)
@@ -339,7 +341,9 @@ public class OrderService : IOrderService
     {
         try
         {
-            var order = await _context.Orders.FirstOrDefaultAsync(o => o.OrderId == orderId);
+            var order = await _context.Orders
+                .Include(o => o.Customer)
+                .FirstOrDefaultAsync(o => o.OrderId == orderId);
             if (order == null)
             {
                 return new ApiResponse<OrderDto> { Success = false, Message = "Không tìm thấy đơn hàng" };
@@ -383,6 +387,13 @@ public class OrderService : IOrderService
             
             await _context.SaveChangesAsync();
 
+            // Send delivery success email
+            var customerEmail = order.Customer?.Email;
+            if (!string.IsNullOrEmpty(customerEmail))
+            {
+               _ = Task.Run(() => _emailService.SendDeliverySuccessEmailAsync(customerEmail, order));
+            }         
+            
             return await GetOrderByIdAsync(orderId);
         }
         catch (Exception ex)

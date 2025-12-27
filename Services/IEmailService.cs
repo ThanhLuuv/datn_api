@@ -6,4 +6,5 @@ public interface IEmailService
 {
     Task SendEmailAsync(string to, string subject, string body);
     Task SendOrderInvoiceEmailAsync(string to, Order order, Invoice invoice);
+    Task SendDeliverySuccessEmailAsync(string to, Order order);
 }
