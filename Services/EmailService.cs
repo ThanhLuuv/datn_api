@@ -2,6 +2,9 @@ using MailKit.Net.Smtp;
 using MailKit.Security;
 using MimeKit;
 using MimeKit.Text;
+using QuestPDF.Fluent;
+using QuestPDF.Helpers;
+using QuestPDF.Infrastructure;
 
 namespace BookStore.Api.Services;
 
@@ -14,6 +17,7 @@ public class EmailService : IEmailService
     {
         _configuration = configuration;
         _logger = logger;
+        QuestPDF.Settings.License = LicenseType.Community;
     }
 
     public async Task SendEmailAsync(string to, string subject, string body)
@@ -31,7 +35,6 @@ public class EmailService : IEmailService
 
             using var smtp = new SmtpClient();
             
-            // Try EmailSettings first (standard), then Email (legacy from OrderService)
             var host = _configuration["EmailSettings:Host"] ?? _configuration["Email:Smtp:Host"] ?? "smtp.gmail.com";
             var portStr = _configuration["EmailSettings:Port"] ?? _configuration["Email:Smtp:Port"] ?? "587";
             var port = int.Parse(portStr);
@@ -40,13 +43,7 @@ public class EmailService : IEmailService
 
             if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
             {
-                 // Log warning and fallback to simulation
-                 _logger.LogWarning("Email settings missing (checked both EmailSettings and Email:Credentials).");
-                 _logger.LogInformation("=== SIMULATED EMAIL ===");
-                 _logger.LogInformation("To: {0}", to);
-                 _logger.LogInformation("Subject: {0}", subject);
-                 _logger.LogInformation("Body: {0}", body);
-                 _logger.LogInformation("=======================");
+                 _logger.LogWarning("Email settings missing.");
                  return; 
             }
 
@@ -58,18 +55,19 @@ public class EmailService : IEmailService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send email to {To}", to);
-            // Don't throw to avoid breaking the user flow, just log. 
-            // Or should we throw? For forgot password, if email fails, user can't reset.
-            // I'll throw so AuthService can handle it and tell user.
             throw;
         }
     }
+
     public async Task SendOrderInvoiceEmailAsync(string to, BookStore.Api.Models.Order order, BookStore.Api.Models.Invoice invoice)
     {
         try
         {
             var subject = $"Hóa đơn điện tử - Đơn hàng #{order.OrderId} - BookStore";
-            var invoiceHtml = GenerateInvoiceHtml(order, invoice);
+            
+            // Generate content
+            var invoiceHtml = GenerateInvoiceHtmlBody(order, invoice);
+            var invoicePdf = GenerateInvoicePdf(order, invoice);
 
             var email = new MimeMessage();
             var fromEmail = _configuration["EmailSettings:FromEmail"] ?? "noreply@bookstore.com";
@@ -82,12 +80,12 @@ public class EmailService : IEmailService
             var bodyBuilder = new BodyBuilder
             {
                 HtmlBody = invoiceHtml,
-                TextBody = $"Cảm ơn bạn đã mua hàng tại BookStore. Đơn hàng #{order.OrderId} của bạn đã được thanh toán thành công. Vui lòng xem hóa đơn đính kèm."
+                TextBody = $"Cảm ơn bạn đã mua hàng tại BookStore. Đơn hàng #{order.OrderId} của bạn đã được thanh toán thành công. Vui lòng xem hóa đơn PDF đính kèm."
             };
 
-            // Attach HTML Invoice file
-            var invoiceFileName = $"Invoice_Order_{order.OrderId}_{DateTime.Now:yyyyMMdd}.html";
-            bodyBuilder.Attachments.Add(invoiceFileName, System.Text.Encoding.UTF8.GetBytes(invoiceHtml), new ContentType("text", "html"));
+            // Attach PDF Invoice file
+            var invoiceFileName = $"Invoice_Order_{order.OrderId}_{DateTime.Now:yyyyMMdd}.pdf";
+            bodyBuilder.Attachments.Add(invoiceFileName, invoicePdf, new ContentType("application", "pdf"));
 
             email.Body = bodyBuilder.ToMessageBody();
 
@@ -113,104 +111,181 @@ public class EmailService : IEmailService
         catch (Exception ex)
         {
              _logger.LogError(ex, "Failed to send invoice email to {To}", to);
-             // Log only, don't throw to avoid blocking the webhook process
         }
     }
 
-    private string GenerateInvoiceHtml(BookStore.Api.Models.Order order, BookStore.Api.Models.Invoice invoice)
+    private string GenerateInvoiceHtmlBody(BookStore.Api.Models.Order order, BookStore.Api.Models.Invoice invoice)
     {
-        var sb = new System.Text.StringBuilder();
-        var date = invoice.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm");
-        
-        sb.Append($@"
+        // Simple HTML body focusing on notification
+        return $@"
 <!DOCTYPE html>
 <html>
 <head>
     <style>
         body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-        .container {{ max-width: 800px; margin: 0 auto; padding: 20px; border: 1px solid #eee; }}
-        .header {{ text-align: center; margin-bottom: 30px; border-bottom: 2px solid #28a745; padding-bottom: 10px; }}
-        .company-info {{ float: left; text-align: left; }}
-        .invoice-info {{ float: right; text-align: right; }}
-        .clearfix::after {{ content: ''; clear: both; display: table; }}
-        .customer-info {{ margin-top: 30px; background: #f9f9f9; padding: 15px; border-radius: 5px; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-        th, td {{ padding: 12px; border-bottom: 1px solid #ddd; text-align: left; }}
-        th {{ background-color: #f2f2f2; }}
-        .total-row td {{ font-weight: bold; font-size: 1.1em; }}
-        .footer {{ margin-top: 40px; text-align: center; font-size: 0.9em; color: #777; }}
-        .success-badge {{ color: #28a745; font-weight: bold; border: 1px solid #28a745; padding: 5px 10px; border-radius: 4px; display: inline-block; }}
+        .header {{ color: #28a745; }}
+        .info {{ background: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0; }}
+        .footer {{ font-size: 0.9em; color: #777; }}
     </style>
 </head>
 <body>
-    <div class='container'>
-        <div class='header'>
-            <h1>HÓA ĐƠN ĐIỆN TỬ / INVOICE</h1>
-            <div class='success-badge'>ĐÃ THANH TOÁN / PAID</div>
-        </div>
+    <h2 class='header'>Thanh Toán Thành Công!</h2>
+    <p>Xin chào <strong>{order.ReceiverName}</strong>,</p>
+    <p>Cảm ơn bạn đã mua hàng tại BookStore. Đơn hàng <strong>#{order.OrderId}</strong> của bạn đã được thanh toán thành công.</p>
+    
+    <div class='info'>
+        <p><strong>Mã Hóa Đơn:</strong> {invoice.InvoiceNumber}</p>
+        <p><strong>Tổng Tiền:</strong> {invoice.TotalAmount:N0} ₫</p>
+        <p><strong>Trạng Thái:</strong> ĐÃ THANH TOÁN (PAID)</p>
+    </div>
 
-        <div class='clearfix'>
-            <div class='company-info'>
-                <h3>BOOKSTORE</h3>
-                <p>Website: bookstore.thanhlaptrinh.online<br>Email: support@bookstore.com</p>
-            </div>
-            <div class='invoice-info'>
-                <p><strong>Số HĐ:</strong> {invoice.InvoiceNumber}</p>
-                <p><strong>Ngày:</strong> {date}</p>
-                <p><strong>Mã ĐH:</strong> #{order.OrderId}</p>
-                <p><strong>Ref:</strong> {invoice.PaymentReference}</p>
-            </div>
-        </div>
-
-        <div class='customer-info'>
-            <h4>Thông Tin Khách Hàng</h4>
-            <p><strong>Tên:</strong> {order.ReceiverName}</p>
-            <p><strong>SĐT:</strong> {order.ReceiverPhone}</p>
-            <p><strong>Địa chỉ:</strong> {order.ShippingAddress}</p>
-        </div>
-
-        <table>
-            <thead>
-                <tr>
-                    <th style='width: 5%'>#</th>
-                    <th>Sản Phẩm</th>
-                    <th style='width: 15%; text-align: right'>Đơn Giá</th>
-                    <th style='width: 10%; text-align: center'>SL</th>
-                    <th style='width: 20%; text-align: right'>Thành Tiền</th>
-                </tr>
-            </thead>
-            <tbody>");
-
-        int index = 1;
-        foreach (var line in order.OrderLines)
-        {
-            var bookTitle = line.Book?.Title ?? "Book ISBN " + line.Isbn;
-            sb.Append($@"
-                <tr>
-                    <td>{index++}</td>
-                    <td>{bookTitle}</td>
-                    <td style='text-align: right'>{line.UnitPrice:N0} ₫</td>
-                    <td style='text-align: center'>{line.Qty}</td>
-                    <td style='text-align: right'>{(line.UnitPrice * line.Qty):N0} ₫</td>
-                </tr>");
-        }
-
-        sb.Append($@"
-                <tr class='total-row'>
-                    <td colspan='4' style='text-align: right'>Tổng Cộng:</td>
-                    <td style='text-align: right; color: #d9534f'>{invoice.TotalAmount:N0} ₫</td>
-                </tr>
-            </tbody>
-        </table>
-
-        <div class='footer'>
-            <p>Cảm ơn quý khách đã mua hàng tại BookStore!</p>
-            <p>Đây là hóa đơn điện tử tự động. Mọi thắc mắc vui lòng liên hệ bộ phận CSKH.</p>
-        </div>
+    <p>Chi tiết hóa đơn đầy đủ đã được đính kèm trong file PDF theo email này.</p>
+    
+    <div class='footer'>
+        <hr>
+        <p>BookStore - support@bookstore.com</p>
     </div>
 </body>
-</html>");
+</html>";
+    }
 
-        return sb.ToString();
+    private byte[] GenerateInvoicePdf(BookStore.Api.Models.Order order, BookStore.Api.Models.Invoice invoice)
+    {
+        return Document.Create(container =>
+        {
+            container.Page(page =>
+            {
+                page.Size(PageSizes.A4);
+                page.Margin(2, Unit.Centimetre);
+                page.PageColor(Colors.White);
+                page.DefaultTextStyle(x => x.FontSize(10));
+
+                page.Header().Element(ComposeHeader);
+                page.Content().Element(c => ComposeContent(c, order, invoice));
+                page.Footer().Element(ComposeFooter);
+            });
+        })
+        .GeneratePdf();
+    }
+
+    void ComposeHeader(IContainer container)
+    {
+        container.Row(row =>
+        {
+            row.RelativeItem().Column(column =>
+            {
+                column.Item().Text("BOOKSTORE").FontSize(20).SemiBold().FontColor(Colors.Blue.Medium);
+                column.Item().Text("Website: bookstore.thanhlaptrinh.online");
+                column.Item().Text("Email: support@bookstore.com");
+            });
+
+            row.ConstantItem(150).Column(column =>
+            {
+                column.Item().Text("HÓA ĐƠN GTGT").FontSize(16).SemiBold().AlignRight();
+                column.Item().Text("INVOICE").FontSize(12).AlignRight();
+                
+                column.Item().PaddingTop(5).Text("ĐÃ THANH TOÁN").FontSize(12).FontColor(Colors.Green.Medium).Bold().AlignRight();
+            });
+        });
+    }
+
+    void ComposeContent(IContainer container, BookStore.Api.Models.Order order, BookStore.Api.Models.Invoice invoice)
+    {
+        container.PaddingVertical(20).Column(column =>
+        {
+            // Info Row
+            column.Item().Row(row =>
+            {
+                row.RelativeItem().Column(col =>
+                {
+                    col.Item().Text("Thông Tin Khách Hàng").Bold();
+                    col.Item().Text(order.ReceiverName);
+                    col.Item().Text(order.ReceiverPhone);
+                    col.Item().Text(order.ShippingAddress);
+                });
+
+                row.RelativeItem().AlignRight().Column(col =>
+                {
+                    col.Item().Text("Thông Tin Hóa Đơn").Bold();
+                    col.Item().Text($"Số: {invoice.InvoiceNumber}");
+                    col.Item().Text($"Ngày: {invoice.CreatedAt.ToLocalTime():dd/MM/yyyy HH:mm}");
+                    col.Item().Text($"Đơn hàng: #{order.OrderId}");
+                    col.Item().Text($"Ref: {invoice.PaymentReference}");
+                });
+            });
+
+            column.Item().PaddingTop(20).Element(c => ComposeTable(c, order, invoice));
+            
+            column.Item().PaddingTop(25).Row(row => 
+            {
+                 row.RelativeItem().Column(c => c.Item().Text("Người mua hàng").AlignCenter());
+                 row.RelativeItem().Column(c => c.Item().Text("Người bán hàng").AlignCenter());
+            });
+        });
+    }
+
+    void ComposeTable(IContainer container, BookStore.Api.Models.Order order, BookStore.Api.Models.Invoice invoice)
+    {
+        container.Table(table =>
+        {
+            // Definition
+            table.ColumnsDefinition(columns =>
+            {
+                columns.ConstantColumn(25);
+                columns.RelativeColumn(3);
+                columns.RelativeColumn();
+                columns.RelativeColumn();
+                columns.RelativeColumn();
+            });
+
+            // Header
+            table.Header(header =>
+            {
+                header.Cell().Element(CellStyle).Text("#");
+                header.Cell().Element(CellStyle).Text("Sản Phẩm");
+                header.Cell().Element(CellStyle).AlignRight().Text("Đơn Giá");
+                header.Cell().Element(CellStyle).AlignCenter().Text("SL");
+                header.Cell().Element(CellStyle).AlignRight().Text("Thành Tiền");
+
+                static IContainer CellStyle(IContainer container)
+                {
+                    return container.DefaultTextStyle(x => x.SemiBold()).PaddingVertical(5).BorderBottom(1).BorderColor(Colors.Grey.Lighten2);
+                }
+            });
+
+            // Content
+            int index = 1;
+            foreach (var line in order.OrderLines)
+            {
+                var bookTitle = line.Book?.Title ?? "Book ISBN " + line.Isbn;
+                
+                table.Cell().Element(CellStyle).Text(index++);
+                table.Cell().Element(CellStyle).Text(bookTitle);
+                table.Cell().Element(CellStyle).AlignRight().Text($"{line.UnitPrice:N0} ₫");
+                table.Cell().Element(CellStyle).AlignCenter().Text($"{line.Qty}");
+                table.Cell().Element(CellStyle).AlignRight().Text($"{(line.UnitPrice * line.Qty):N0} ₫");
+
+                static IContainer CellStyle(IContainer container)
+                {
+                    return container.BorderBottom(1).BorderColor(Colors.Grey.Lighten2).PaddingVertical(5);
+                }
+            }
+            
+             // Total
+            table.Cell().ColumnSpan(4).AlignRight().PaddingTop(10).Text("Tổng Cộng:").Bold().FontSize(12);
+            table.Cell().AlignRight().PaddingTop(10).Text($"{invoice.TotalAmount:N0} ₫").Bold().FontSize(12).FontColor(Colors.Red.Medium);
+        });
+    }
+
+    void ComposeFooter(IContainer container)
+    {
+        container.Column(column =>
+        {
+            column.Item().PaddingTop(20).BorderTop(1).BorderColor(Colors.Grey.Lighten2);
+            column.Item().AlignCenter().Text(x =>
+            {
+                x.Span("BookStore System - Generated via QuestPDF");
+            });
+        });
     }
 }
