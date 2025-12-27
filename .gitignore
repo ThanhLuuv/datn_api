@@ -447,7 +447,3 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 
-# User requests: Sensitive config files
-appsettings.json
-appsettings.Development.json
-BookStore.Api/appsettings.json
