@@ -136,7 +136,7 @@ public class PriceChangeController : ControllerBase
     /// <param name="asOfDate">Date to check price (optional, defaults to now)</param>
     /// <returns>Current price</returns>
     [HttpGet("current-price/{isbn}")]
-    [AllowAnonymous]
+    [Authorize(Policy = "PERM_READ_PRICE_CHANGE")]
     public async Task<ActionResult<ApiResponse<decimal>>> GetCurrentPrice(string isbn, [FromQuery] DateTime? asOfDate = null)
     {
         var result = await _priceChangeService.GetCurrentPriceAsync(isbn, asOfDate);
@@ -155,7 +155,7 @@ public class PriceChangeController : ControllerBase
     /// <param name="isbn">Book ISBN</param>
     /// <returns>Price history</returns>
     [HttpGet("history/{isbn}")]
-    [AllowAnonymous]
+    [Authorize(Policy = "PERM_READ_PRICE_CHANGE")]
     public async Task<ActionResult<ApiResponse<List<PriceChangeDto>>>> GetPriceHistory(string isbn)
     {
         var result = await _priceChangeService.GetPriceHistoryAsync(isbn);

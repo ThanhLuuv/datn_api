@@ -210,7 +210,7 @@ public class PromotionController : ControllerBase
     /// Lấy danh sách sách đang có khuyến mãi
     /// </summary>
     [HttpGet("active-books")]
-    [AllowAnonymous] // Cho phép khách hàng xem sách khuyến mãi
+    [Authorize(Policy = "PERM_READ_PROMOTION")] // Cho phép khách hàng xem sách khuyến mãi
     public async Task<ActionResult<ApiResponse<List<PromotionBookDto>>>> GetActivePromotionBooks()
     {
         try
@@ -229,7 +229,7 @@ public class PromotionController : ControllerBase
     /// Lấy danh sách khuyến mãi đang áp dụng cho một cuốn sách
     /// </summary>
     [HttpGet("book/{isbn}")]
-    [AllowAnonymous] // Cho phép khách hàng xem khuyến mãi của sách
+    [Authorize(Policy = "PERM_READ_PROMOTION")] // Cho phép khách hàng xem khuyến mãi của sách
     public async Task<ActionResult<ApiResponse<List<PromotionDto>>>> GetActivePromotionsForBook(string isbn)
     {
         try

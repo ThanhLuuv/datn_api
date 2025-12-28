@@ -22,7 +22,7 @@ public class AreaController : ControllerBase
     /// Lấy danh sách tất cả khu vực (Public API)
     /// </summary>
     [HttpGet]
-    [AllowAnonymous]
+    [Authorize(Policy = "PERM_READ_AREA")]
     public async Task<ActionResult<ApiResponse<AreaListResponse>>> GetAreas()
     {
         try
@@ -65,7 +65,7 @@ public class AreaController : ControllerBase
     /// Lấy thông tin khu vực theo ID (Public API)
     /// </summary>
     [HttpGet("{areaId}")]
-    [AllowAnonymous]
+    [Authorize(Policy = "PERM_READ_AREA")]
     public async Task<ActionResult<ApiResponse<AreaDto>>> GetArea(long areaId)
     {
         try

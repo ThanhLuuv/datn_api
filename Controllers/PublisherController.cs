@@ -25,7 +25,7 @@ public class PublisherController : ControllerBase
     /// <param name="searchTerm">Từ khóa tìm kiếm</param>
     /// <returns>Danh sách nhà xuất bản</returns>
     [HttpGet]
-    [AllowAnonymous]
+    [Authorize(Policy = "PERM_READ_PUBLISHER")]
     public async Task<ActionResult<ApiResponse<PublisherListResponse>>> GetPublishers(
         [FromQuery] int pageNumber = 1,
         [FromQuery] int pageSize = 10,
@@ -47,7 +47,7 @@ public class PublisherController : ControllerBase
     /// <param name="publisherId">ID nhà xuất bản</param>
     /// <returns>Thông tin nhà xuất bản</returns>
     [HttpGet("{publisherId}")]
-    [AllowAnonymous]
+    [Authorize(Policy = "PERM_READ_PUBLISHER")]
     public async Task<ActionResult<ApiResponse<PublisherDto>>> GetPublisher(long publisherId)
     {
         var result = await _publisherService.GetPublisherByIdAsync(publisherId);
