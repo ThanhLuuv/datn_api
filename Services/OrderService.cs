@@ -16,8 +16,9 @@ public class OrderService : IOrderService
     private readonly ICartService _cartService;
     private readonly IConfiguration _configuration;
     private readonly IEmailService _emailService;
+    private readonly IReturnService _returnService;
 
-    public OrderService(BookStoreDbContext context, IPaymentService paymentService, IInvoiceService invoiceService, ICartService cartService, IConfiguration configuration, IExpenseService expenseService, IEmailService emailService)
+    public OrderService(BookStoreDbContext context, IPaymentService paymentService, IInvoiceService invoiceService, ICartService cartService, IConfiguration configuration, IExpenseService expenseService, IEmailService emailService, IReturnService returnService)
     {
         _context = context;
         _paymentService = paymentService;
@@ -26,6 +27,7 @@ public class OrderService : IOrderService
         _configuration = configuration;
         _expenseService = expenseService;
         _emailService = emailService;
+        _returnService = returnService;
     }
 
     public async Task<ApiResponse<OrderListResponse>> GetOrdersAsync(OrderSearchRequest request)
