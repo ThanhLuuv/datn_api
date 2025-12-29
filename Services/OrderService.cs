@@ -294,7 +294,11 @@ public class OrderService : IOrderService
     {
         try
         {
-            var order = await _context.Orders.FirstOrDefaultAsync(o => o.OrderId == orderId);
+            // Load order with OrderLines to calculate TotalAmount and TotalQuantity for email
+            var order = await _context.Orders
+                .Include(o => o.OrderLines)
+                    .ThenInclude(ol => ol.Book)
+                .FirstOrDefaultAsync(o => o.OrderId == orderId);
             if (order == null)
             {
                 return new ApiResponse<OrderDto> { Success = false, Message = "Không tìm thấy đơn hàng" };
